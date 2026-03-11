@@ -135,7 +135,14 @@ export default function SportAI() {
         if (arts.length > 0) {
           setArticles(arts.map(a => ({
             ...a,
-            socials: a.socials || {},
+            db_id: a.id,
+            id: a.id,
+            catId: a.cat_id,
+            clientName: a.client_name || "Il tuo sito",
+            forTarget: a.for_target || "mysite",
+            featuredImageId: a.featured_image_id,
+            publishedToWP: a.published_to_wp,
+            socials: typeof a.socials === "string" ? JSON.parse(a.socials) : (a.socials || {}),
             createdAt: new Date(a.created_at),
           })));
         }
@@ -302,17 +309,21 @@ REGOLE FORMATO:
       try {
         addLog("🖼 Ricerca immagine di copertina...", "info");
         const catKeywords = {
-          comunicazione: "sport marketing digital",
-          regolamento: "sport law regulation",
-          news: "sport italy",
-          fiscalita: "finance business sport",
-          normative: "sport association",
+          comunicazione: "sports team training action",
+          regolamento: "sports stadium arena",
+          news: "sports competition athletes",
+          fiscalita: "sports business meeting",
+          normative: "sports club team",
         };
-        const keyword = catKeywords[catId] || "sport italy";
-        const imgRes = await fetch(`/api/unsplash?query=${encodeURIComponent(keyword)}`);
-        if (imgRes.ok) {
-          const imgData = await imgRes.json();
-          const imageUrl = imgData.url;
+        const keyword = catKeywords[catId] || "sports athletes action";
+        // Fetch 3 image options for user to choose from
+        const [img1, img2, img3] = await Promise.all([
+          fetch(`/api/unsplash?query=${encodeURIComponent(keyword)}`).then(r => r.ok ? r.json() : null),
+          fetch(`/api/unsplash?query=${encodeURIComponent(keyword)}`).then(r => r.ok ? r.json() : null),
+          fetch(`/api/unsplash?query=${encodeURIComponent(keyword)}`).then(r => r.ok ? r.json() : null),
+        ]);
+        const imageOptions = [img1?.url, img2?.url, img3?.url].filter(Boolean);
+        const imageUrl = imageOptions[0]; // default first, user can change in review
           if (imageUrl) {
             // Upload via server-side proxy to avoid CORS and binary issues
             const currentWp = wpConfigRef.current;
@@ -362,7 +373,7 @@ Rispondi SOLO con il testo del post, niente altro.`;
       }
 
       setArticles(prev => prev.map(a =>
-        a.id === id ? { ...a, title, content, socials: socialResults, featuredImageId, status: STATUS.PENDING } : a
+        a.id === id ? { ...a, title, content, socials: socialResults, featuredImageId, imageOptions: imageOptions || [], status: STATUS.PENDING } : a
       ));
       // Save to Supabase
       try {
@@ -438,7 +449,28 @@ Rispondi SOLO con il testo del post, niente altro.`;
   }, [wpConfig, addLog]);
 
   const approveArticle = useCallback(async (article) => {
-    const published = await publishToWordPress(article);
+    // If user selected a different image, upload it first
+    let finalArticle = article;
+    if (article.selectedImageUrl && article.selectedImageUrl !== article.imageOptions?.[0]) {
+      addLog("🖼 Upload immagine selezionata...", "info");
+      try {
+        const proxyRes = await fetch("/api/upload-media", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            imageUrl: article.selectedImageUrl,
+            wpUrl: wpConfigRef.current.url,
+            wpUser: wpConfigRef.current.user,
+            wpPassword: wpConfigRef.current.password,
+          }),
+        });
+        if (proxyRes.ok) {
+          const data = await proxyRes.json();
+          finalArticle = { ...article, featuredImageId: data.id };
+        }
+      } catch(e) {}
+    }
+    const published = await publishToWordPress(finalArticle);
     setArticles(prev => prev.map(a =>
       a.id === article.id ? { ...a, status: STATUS.APPROVED, publishedToWP: published } : a
     ));
@@ -955,6 +987,7 @@ function ArticleDetail({ article, onApprove, onReject, onEdit, wpConfigured }) {
   const [editTitle, setEditTitle] = useState(article.title);
   const [editContent, setEditContent] = useState(article.content);
   const [editSocials, setEditSocials] = useState({ ...article.socials });
+  const [selectedImageUrl, setSelectedImageUrl] = useState(article.imageOptions?.[0] || null);
   const cat = CATEGORIES.find(c => c.id === article.catId);
 
   const handleSave = () => {
@@ -1081,9 +1114,31 @@ function ArticleDetail({ article, onApprove, onReject, onEdit, wpConfigured }) {
         </div>
       )}
 
+      {!editing && article.status === STATUS.PENDING && article.imageOptions?.length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          <div style={{ fontSize: 11, color: "#555", textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 10 }}>🖼 Scegli immagine di copertina</div>
+          <div style={{ display: "flex", gap: 10 }}>
+            {article.imageOptions.map((url, i) => url && (
+              <div
+                key={i}
+                onClick={() => setSelectedImageUrl(url)}
+                style={{
+                  flex: 1, height: 80, borderRadius: 8, overflow: "hidden", cursor: "pointer",
+                  border: selectedImageUrl === url ? "2px solid #E8B84B" : "2px solid transparent",
+                  opacity: selectedImageUrl === url ? 1 : 0.6,
+                  transition: "all 0.15s",
+                }}
+              >
+                <img src={url} style={{ width: "100%", height: "100%", objectFit: "cover" }} alt={`Opzione ${i+1}`} />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {!editing && article.status === STATUS.PENDING && (
         <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
-          <button style={s.approveBtn} onClick={() => onApprove({ ...article, title: editTitle, content: editContent, socials: editSocials })}>
+          <button style={s.approveBtn} onClick={() => onApprove({ ...article, title: editTitle, content: editContent, socials: editSocials, selectedImageUrl })}>
             ✅ Approva{wpConfigured ? " e Pubblica su WP" : ""}
           </button>
           <button style={s.rejectBtn} onClick={onReject}>✗ Rifiuta</button>
