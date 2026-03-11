@@ -50,7 +50,7 @@ const newId = () => _articleId++;
 
 // ─── API HELPERS ──────────────────────────────────────────────────────────────
 async function callClaude(messages, system) {
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
+  const res = await fetch("/api/claude", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
