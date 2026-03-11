@@ -251,21 +251,24 @@ REGOLE FORMATO:
           const imgData = await imgRes.json();
           const imageUrl = imgData.url;
           if (imageUrl) {
-            const creds = btoa(`${wpConfig.user}:${wpConfig.password}`);
-            const imgBlob = await (await fetch(imageUrl)).blob();
-            const formData = new FormData();
-            formData.append("file", new File([imgBlob], "copertina.jpg", { type: "image/jpeg" }));
-            const mediaRes = await fetch(`${wpConfig.url}/wp-json/wp/v2/media`, {
+            // Upload via server-side proxy to avoid CORS and binary issues
+            const proxyRes = await fetch("/api/upload-media", {
               method: "POST",
-              headers: { "Authorization": `Basic ${creds}`, "Content-Disposition": "attachment; filename=\"copertina.jpg\"" },
-              body: formData,
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                imageUrl,
+                wpUrl: wpConfig.url,
+                wpUser: wpConfig.user,
+                wpPassword: wpConfig.password,
+              }),
             });
-            if (mediaRes.ok) {
-              const mediaData = await mediaRes.json();
-              featuredImageId = mediaData.id;
-              addLog("✅ Immagine di copertina caricata (16:9 HD)", "success");
+            if (proxyRes.ok) {
+              const proxyData = await proxyRes.json();
+              featuredImageId = proxyData.id;
+              addLog("✅ Immagine di copertina caricata", "success");
             } else {
-              addLog("⚠️ Upload immagine WP fallito: " + mediaRes.status, "info");
+              const errData = await proxyRes.json().catch(() => ({}));
+              addLog("⚠️ Upload immagine fallito: " + (errData.error || proxyRes.status), "info");
             }
           }
         } else {
