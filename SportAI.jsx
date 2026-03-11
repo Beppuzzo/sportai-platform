@@ -1,5 +1,28 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 
+// ─── SUPABASE ─────────────────────────────────────────────────────────────────
+const SUPABASE_URL = "https://fyfqboqctjhoprhppjkf.supabase.co";
+const SUPABASE_KEY = "sb_publishable_cTL4Po_qXF3iuRbioDzyIQ_TWN0y_l2";
+
+async function sbQuery(path, options = {}) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1${path}`, {
+    ...options,
+    headers: {
+      "apikey": SUPABASE_KEY,
+      "Authorization": `Bearer ${SUPABASE_KEY}`,
+      "Content-Type": "application/json",
+      "Prefer": options.prefer || "return=representation",
+      ...(options.headers || {}),
+    },
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Supabase error ${res.status}: ${err}`);
+  }
+  const text = await res.text();
+  return text ? JSON.parse(text) : [];
+}
+
 // ─── CONSTANTS ───────────────────────────────────────────────────────────────
 
 const CATEGORIES = [
@@ -73,7 +96,7 @@ function extractText(data) {
 export default function SportAI() {
   const [tab, setTab] = useState("dashboard");
   const [articles, setArticles] = useState([]);
-  const [clients, setClients] = useState(DEMO_CLIENTS);
+  const [clients, setClients] = useState([]);
   const [selectedArticle, setSelectedArticle] = useState(null);
   const [generating, setGenerating] = useState(false);
   const [log, setLog] = useState([]);
@@ -85,9 +108,44 @@ export default function SportAI() {
   const [genCategory, setGenCategory] = useState("comunicazione");
   const [genTopic, setGenTopic] = useState("");
   const [genSocials, setGenSocials] = useState(["instagram", "facebook", "linkedin"]);
-  const [genFor, setGenFor] = useState("mysite"); // "mysite" | clientId
+  const [genFor, setGenFor] = useState("mysite");
+  const [dbReady, setDbReady] = useState(false);
   const logRef = useRef(null);
   const scheduleRef = useRef(null);
+
+  // ── Load from Supabase on mount ───────────────────────────────────────────
+  useEffect(() => {
+    async function loadData() {
+      try {
+        // Load settings
+        const settings = await sbQuery("/settings?select=*").catch(() => []);
+        if (settings.length > 0) {
+          const s = settings[0];
+          if (s.wp_url) setWpConfig({ url: s.wp_url, user: s.wp_user, password: s.wp_password });
+          if (s.schedule) setSchedule(s.schedule);
+        }
+        // Load clients
+        const cls = await sbQuery("/clients?select=*&order=created_at.desc").catch(() => []);
+        if (cls.length > 0) setClients(cls.map(c => ({ ...c, articlesCount: c.articles_count || 0 })));
+        else setClients(DEMO_CLIENTS);
+        // Load articles
+        const arts = await sbQuery("/articles?select=*&order=created_at.desc&limit=100").catch(() => []);
+        if (arts.length > 0) {
+          setArticles(arts.map(a => ({
+            ...a,
+            socials: a.socials || {},
+            createdAt: new Date(a.created_at),
+          })));
+        }
+        setDbReady(true);
+      } catch(e) {
+        console.error("Supabase load error:", e);
+        setClients(DEMO_CLIENTS);
+        setDbReady(true);
+      }
+    }
+    loadData();
+  }, []);
 
   const addLog = useCallback((msg, type = "info") => {
     const ts = new Date().toLocaleTimeString("it-IT");
@@ -300,6 +358,24 @@ Rispondi SOLO con il testo del post, niente altro.`;
       setArticles(prev => prev.map(a =>
         a.id === id ? { ...a, title, content, socials: socialResults, featuredImageId, status: STATUS.PENDING } : a
       ));
+      // Save to Supabase
+      try {
+        await sbQuery("/articles", {
+          method: "POST",
+          body: JSON.stringify({
+            cat_id: catId,
+            topic: topicFinal,
+            title,
+            content,
+            socials: socialResults,
+            featured_image_id: featuredImageId,
+            status: STATUS.PENDING,
+            for_target: forTarget,
+            client_name: client?.name || "Il tuo sito",
+            auto,
+          }),
+        });
+      } catch(e) { console.error("Save article error:", e); }
       addLog(`📋 Articolo #${id} in attesa della tua approvazione`, "highlight");
     } catch (err) {
       addLog(`❌ Errore generazione: ${err.message}`, "error");
@@ -362,6 +438,12 @@ Rispondi SOLO con il testo del post, niente altro.`;
     ));
     setSelectedArticle(null);
     addLog(`✅ Articolo #${article.id} approvato${published ? " e pubblicato su WP" : " (WP non configurato)"}`, "success");
+    // Update in Supabase
+    try {
+      if (article.db_id) {
+        await sbQuery(`/articles?id=eq.${article.db_id}`, { method: "PATCH", prefer: "return=minimal", body: JSON.stringify({ status: STATUS.APPROVED, published_to_wp: published }) });
+      }
+    } catch(e) { console.error("Update article error:", e); }
     if (article.forTarget !== "mysite") {
       setClients(prev => prev.map(c =>
         c.id === Number(article.forTarget) ? { ...c, articlesCount: (c.articlesCount || 0) + 1 } : c
@@ -373,6 +455,11 @@ Rispondi SOLO con il testo del post, niente altro.`;
     setArticles(prev => prev.map(a => a.id === article.id ? { ...a, status: STATUS.REJECTED } : a));
     setSelectedArticle(null);
     addLog(`✗ Articolo #${article.id} rifiutato`, "error");
+    try {
+      if (article.db_id) {
+        sbQuery(`/articles?id=eq.${article.db_id}`, { method: "PATCH", prefer: "return=minimal", body: JSON.stringify({ status: STATUS.REJECTED }) });
+      }
+    } catch(e) {}
   }, []);
 
   // ── Stats ─────────────────────────────────────────────────────────────────
@@ -778,7 +865,22 @@ Rispondi SOLO con il testo del post, niente altro.`;
               ))}
               <button
                 style={s.generateBtn}
-                onClick={() => { setWpSaved(true); addLog("💾 Configurazione WordPress salvata", "success"); }}
+                onClick={async () => {
+                setWpSaved(true);
+                addLog("💾 Configurazione WordPress salvata", "success");
+                try {
+                  await sbQuery("/settings?id=eq.1", {
+                    method: "PATCH",
+                    prefer: "return=minimal",
+                    body: JSON.stringify({ wp_url: wpConfig.url, wp_user: wpConfig.user, wp_password: wpConfig.password, schedule }),
+                  }).catch(async () => {
+                    await sbQuery("/settings", {
+                      method: "POST",
+                      body: JSON.stringify({ id: 1, wp_url: wpConfig.url, wp_user: wpConfig.user, wp_password: wpConfig.password, schedule }),
+                    });
+                  });
+                } catch(e) { console.error("Save settings error:", e); }
+              }}
               >
                 {wpSaved ? "✅ Salvato" : "💾 Salva configurazione"}
               </button>
@@ -827,10 +929,14 @@ Rispondi SOLO con il testo del post, niente altro.`;
       {/* CLIENT MODAL */}
       {showClientModal && (
         <ClientModal
-          onSave={(client) => {
-            setClients(prev => [...prev, { ...client, id: Date.now(), articlesCount: 0 }]);
+          onSave={async (client) => {
+            const newClient = { ...client, id: Date.now(), articlesCount: 0 };
+            setClients(prev => [...prev, newClient]);
             setShowClientModal(false);
             addLog(`✅ Nuovo cliente aggiunto: ${client.name}`, "success");
+            try {
+              await sbQuery("/clients", { method: "POST", body: JSON.stringify({ name: client.name, sport: client.sport, plan: client.plan, active: client.active, wp_url: client.wpUrl, articles_count: 0 }) });
+            } catch(e) { console.error("Save client error:", e); }
           }}
           onClose={() => setShowClientModal(false)}
         />
