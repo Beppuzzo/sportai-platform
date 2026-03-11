@@ -241,34 +241,39 @@ REGOLE FORMATO:
         const catKeywords = {
           comunicazione: "sport marketing digital",
           regolamento: "sport law regulation",
-          news: "sport italy news",
+          news: "sport italy",
           fiscalita: "finance business sport",
-          normative: "sport association meeting",
+          normative: "sport association",
         };
         const keyword = catKeywords[catId] || "sport italy";
-        // Use Unsplash Source — free, no API key needed, 1280x720 = 16:9 HD
-        const imageUrl = `https://source.unsplash.com/1280x720/?${encodeURIComponent(keyword)}`;
-        const creds = btoa(`${wpConfig.user}:${wpConfig.password}`);
-        const imgRes = await fetch(imageUrl);
+        const unsplashKey = "GthMipPPgDXBhWaAOZYCET7XRIKMvbhyMeZdtgDrCQs";
+        const imgRes = await fetch(`https://api.unsplash.com/photos/random?query=${encodeURIComponent(keyword)}&orientation=landscape&w=1280&h=720&client_id=${unsplashKey}`);
         if (imgRes.ok) {
-          const imgBlob = await imgRes.blob();
-          const formData = new FormData();
-          formData.append("file", new File([imgBlob], "copertina.jpg", { type: "image/jpeg" }));
-          const mediaRes = await fetch(`${wpConfig.url}/wp-json/wp/v2/media`, {
-            method: "POST",
-            headers: { "Authorization": `Basic ${creds}`, "Content-Disposition": "attachment; filename=\"copertina.jpg\"" },
-            body: formData,
-          });
-          if (mediaRes.ok) {
-            const mediaData = await mediaRes.json();
-            featuredImageId = mediaData.id;
-            addLog("✅ Immagine di copertina caricata (16:9 HD)", "success");
-          } else {
-            addLog("⚠️ Upload immagine fallito: " + mediaRes.status, "info");
+          const imgData = await imgRes.json();
+          const imageUrl = imgData.urls?.regular;
+          if (imageUrl) {
+            const creds = btoa(`${wpConfig.user}:${wpConfig.password}`);
+            const imgBlob = await (await fetch(imageUrl)).blob();
+            const formData = new FormData();
+            formData.append("file", new File([imgBlob], "copertina.jpg", { type: "image/jpeg" }));
+            const mediaRes = await fetch(`${wpConfig.url}/wp-json/wp/v2/media`, {
+              method: "POST",
+              headers: { "Authorization": `Basic ${creds}`, "Content-Disposition": "attachment; filename=\"copertina.jpg\"" },
+              body: formData,
+            });
+            if (mediaRes.ok) {
+              const mediaData = await mediaRes.json();
+              featuredImageId = mediaData.id;
+              addLog("✅ Immagine di copertina caricata (16:9 HD)", "success");
+            } else {
+              addLog("⚠️ Upload immagine WP fallito: " + mediaRes.status, "info");
+            }
           }
+        } else {
+          addLog("⚠️ Unsplash non disponibile: " + imgRes.status, "info");
         }
       } catch(e) {
-        addLog("⚠️ Immagine copertina non disponibile", "info");
+        addLog("⚠️ Immagine copertina errore: " + e.message, "info");
       }
 
       // Social posts
