@@ -1,50 +1,56 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 
-// ─── CONSTANTS ────────────────────────────────────────────────────────────────
+// ─── CONSTANTS ───────────────────────────────────────────────────────────────
 
-const REGIONI = [
-  "Tutte","Abruzzo","Basilicata","Calabria","Campania","Emilia-Romagna",
-  "Friuli-Venezia Giulia","Lazio","Liguria","Lombardia","Marche","Molise",
-  "Piemonte","Puglia","Sardegna","Sicilia","Toscana","Trentino-Alto Adige",
-  "Umbria","Valle d'Aosta","Veneto"
+const CATEGORIES = [
+  { id: "comunicazione", label: "Comunicazione & Marketing", icon: "📣", color: "#E8B84B" },
+  { id: "regolamento",   label: "Regolamento & Leggi",       icon: "⚖️",  color: "#5B8FA8" },
+  { id: "news",          label: "News Sportive",             icon: "📰",  color: "#A8C5A0" },
+  { id: "fiscalita",     label: "Fiscalità & Legale",        icon: "💼",  color: "#C9956C" },
+  { id: "normative",     label: "Normative",                 icon: "📋",  color: "#9B8EA8" },
 ];
 
-const SPORT_LIST = [
-  "Calcio","Basket","Nuoto","Pallavolo","Tennis","Rugby","Atletica",
-  "Ginnastica","Ciclismo","Boxe","Judo","Karate","Scherma","Padel",
-  "Beach Volley","Handball","Hockey","Canottaggio","Vela","Equitazione"
+const SOCIAL_FORMATS = [
+  { id: "instagram", label: "Instagram", icon: "📸", color: "#E1306C" },
+  { id: "facebook",  label: "Facebook",  icon: "👍", color: "#1877F2" },
+  { id: "linkedin",  label: "LinkedIn",  icon: "💼", color: "#0A66C2" },
 ];
 
-const LEAD_STATUS = {
-  NEW: "new",
-  ANALYZING: "analyzing",
-  READY: "ready",
-  WRITING: "writing",
-  PENDING: "pending",
-  SENT: "sent",
-  REJECTED: "rejected",
-};
+const SCHEDULE_OPTIONS = [
+  { id: "manual",  label: "Solo manuale" },
+  { id: "daily",   label: "1 al giorno" },
+  { id: "2daily",  label: "2 al giorno" },
+  { id: "weekly",  label: "3 a settimana" },
+];
+
+const PLANS = [
+  { id: "base", label: "Base",  price: "€149", articles: 8,  color: "#A8C5A0" },
+  { id: "pro",  label: "Pro",   price: "€299", articles: 20, color: "#E8B84B" },
+  { id: "full", label: "Full",  price: "€499", articles: 99, color: "#C9956C" },
+];
+
+const STATUS = { GENERATING: "generating", PENDING: "pending", APPROVED: "approved", REJECTED: "rejected" };
 
 const STATUS_META = {
-  new:       { label: "Trovato",        color: "#888" },
-  analyzing: { label: "Analisi...",     color: "#E8B84B" },
-  ready:     { label: "Analizzato",     color: "#5B8FA8" },
-  writing:   { label: "Scrittura...",   color: "#E8B84B" },
-  pending:   { label: "Da approvare",   color: "#C9956C" },
-  sent:      { label: "Inviata ✓",      color: "#7AAF6E" },
-  rejected:  { label: "Scartato",       color: "#C97B6C" },
+  generating: { label: "Generazione...", color: "#E8B84B" },
+  pending:    { label: "In attesa",      color: "#5B8FA8" },
+  approved:   { label: "Approvato ✓",    color: "#A8C5A0" },
+  rejected:   { label: "Rifiutato",      color: "#C97B6C" },
 };
 
-const NEED_SCORE = { 1: "Basso", 2: "Medio", 3: "Alto", 4: "Urgente" };
-const NEED_COLOR = { 1: "#555", 2: "#5B8FA8", 3: "#C9956C", 4: "#C97B6C" };
+// ─── FAKE CLIENTS (demo) ──────────────────────────────────────────────────────
+const DEMO_CLIENTS = [
+  { id: 1, name: "ASD Olimpia Calcio Roma",    plan: "pro",  sport: "Calcio",    active: true,  wpUrl: "", articlesCount: 0 },
+  { id: 2, name: "SSD Nuoto Azzurro Milano",   plan: "full", sport: "Nuoto",     active: true,  wpUrl: "", articlesCount: 0 },
+  { id: 3, name: "ASD Basket Eagles Torino",   plan: "base", sport: "Basket",    active: false, wpUrl: "", articlesCount: 0 },
+];
 
-let _lid = 1;
-const newLid = () => _lid++;
+let _articleId = 1;
+const newId = () => _articleId++;
 
-// ─── API ─────────────────────────────────────────────────────────────────────
-
+// ─── API HELPERS ──────────────────────────────────────────────────────────────
 async function callClaude(messages, system) {
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
+  const res = await fetch("/api/claude", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -59,477 +65,609 @@ async function callClaude(messages, system) {
 }
 
 function extractText(data) {
-  return (data?.content || []).filter(b => b.type === "text").map(b => b.text).join("\n").trim();
+  if (!data?.content) return "";
+  return data.content.filter(b => b.type === "text").map(b => b.text).join("\n").trim();
 }
 
-async function sendViaBrevo(apiKey, to, subject, html) {
-  const res = await fetch("https://api.brevo.com/v3/smtp/email", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "api-key": apiKey },
-    body: JSON.stringify({
-      sender: { name: "SportAI", email: "info@sportai.it" },
-      to: [{ email: to }],
-      subject,
-      htmlContent: html,
-    }),
-  });
-  return res.ok;
-}
-
-// ─── MAIN ────────────────────────────────────────────────────────────────────
-
-export default function Prospezione() {
-  const [leads, setLeads] = useState([]);
-  const [selected, setSelected] = useState(null);
-  const [searching, setSearching] = useState(false);
-  const [tab, setTab] = useState("search"); // search | pipeline | settings
+// ─── MAIN APP ────────────────────────────────────────────────────────────────
+export default function SportAI() {
+  const [tab, setTab] = useState("dashboard");
+  const [articles, setArticles] = useState([]);
+  const [clients, setClients] = useState(DEMO_CLIENTS);
+  const [selectedArticle, setSelectedArticle] = useState(null);
+  const [generating, setGenerating] = useState(false);
   const [log, setLog] = useState([]);
-  const [brevoKey, setBrevoKey] = useState("");
-  const [brevoSaved, setBrevoSaved] = useState(false);
-  const [senderName, setSenderName] = useState("SportAI");
-  const [senderEmail, setSenderEmail] = useState("info@sportai.it");
-
-  // Search params
-  const [regione, setRegione] = useState("Tutte");
-  const [sport, setSport] = useState("Tutti gli sport");
-  const [numResults, setNumResults] = useState(5);
-  const [autoAnalyze, setAutoAnalyze] = useState(true);
-  const [autoWrite, setAutoWrite] = useState(true);
-
+  const [schedule, setSchedule] = useState("manual");
+  const [wpConfig, setWpConfig] = useState({ url: "", user: "", password: "" });
+  const [wpSaved, setWpSaved] = useState(false);
+  const [showClientModal, setShowClientModal] = useState(false);
+  const [activeClientId, setActiveClientId] = useState(null);
+  const [genCategory, setGenCategory] = useState("comunicazione");
+  const [genTopic, setGenTopic] = useState("");
+  const [genSocials, setGenSocials] = useState(["instagram", "facebook", "linkedin"]);
+  const [genFor, setGenFor] = useState("mysite"); // "mysite" | clientId
   const logRef = useRef(null);
+  const scheduleRef = useRef(null);
 
   const addLog = useCallback((msg, type = "info") => {
     const ts = new Date().toLocaleTimeString("it-IT");
-    setLog(p => [...p.slice(-100), { msg, type, ts }]);
-    setTimeout(() => logRef.current?.scrollTo(0, 99999), 50);
+    setLog(prev => [...prev.slice(-80), { msg, type, ts }]);
+    setTimeout(() => logRef.current?.scrollTo(0, 99999), 60);
   }, []);
 
-  const updateLead = useCallback((id, patch) => {
-    setLeads(p => p.map(l => l.id === id ? { ...l, ...patch } : l));
-    setSelected(prev => prev?.id === id ? { ...prev, ...patch } : prev);
+  // ── Scheduler ────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (scheduleRef.current) clearInterval(scheduleRef.current);
+    if (schedule === "manual") return;
+    const intervals = { daily: 86400000, "2daily": 43200000, weekly: 172800000 };
+    const ms = intervals[schedule] || null;
+    if (!ms) return;
+    addLog(`⏱ Scheduler attivo: ${SCHEDULE_OPTIONS.find(s => s.id === schedule)?.label}`, "highlight");
+    scheduleRef.current = setInterval(() => {
+      const cat = CATEGORIES[Math.floor(Math.random() * CATEGORIES.length)];
+      generateArticle(cat.id, "", ["instagram","facebook","linkedin"], "mysite", true);
+    }, ms);
+    return () => clearInterval(scheduleRef.current);
+  }, [schedule]);
+
+  // ── Generation engine ─────────────────────────────────────────────────────
+  const generateArticle = useCallback(async (catId, topic, socials, forTarget, auto = false) => {
+    if (generating) return;
+    setGenerating(true);
+
+    const cat = CATEGORIES.find(c => c.id === catId);
+    const client = forTarget !== "mysite" ? clients.find(c => c.id === Number(forTarget)) : null;
+    const topicFinal = topic.trim() || `aggiornamenti ${cat.label} per lo sport dilettantistico italiano 2025`;
+    const id = newId();
+
+    addLog(`${auto ? "⏱ AUTO" : "🚀 MANUALE"} | Categoria: ${cat.label}${client ? ` | Cliente: ${client.name}` : " | Il tuo sito"}`, "info");
+
+    const placeholder = {
+      id, catId, topic: topicFinal, title: "Generazione in corso...",
+      content: "", socials: {}, status: STATUS.GENERATING,
+      forTarget, clientName: client?.name || "Il tuo sito",
+      createdAt: new Date(), auto,
+    };
+    setArticles(prev => [placeholder, ...prev]);
+
+    try {
+      // Article
+      addLog("🔍 Ricerca fonti autorevoli online...", "info");
+      const articleSystem = `Sei un giornalista sportivo esperto in sport dilettantistico italiano.
+Cerca informazioni aggiornate da fonti autorevoli (CONI, FIGC, Gazzetta dello Sport, Ministero dello Sport, Agenzia delle Entrate).
+Scrivi un articolo originale di 350-500 parole. NON copiare testi: comprendi e rielabora con parole tue.
+${client ? `L'articolo è per la società sportiva: ${client.name} (${client.sport}).` : "L'articolo è per un blog di settore rivolto a operatori sportivi dilettantistici."}
+Struttura risposta: prima riga = TITOLO (senza prefissi), poi corpo articolo.
+Tono: professionale ma accessibile. Cita fonti genericamente ("secondo il CONI", "come prevede la normativa").`;
+
+      const articleData = await callClaude(
+        [{ role: "user", content: `Scrivi un articolo su: ${topicFinal}. Categoria: ${cat.label}.` }],
+        articleSystem
+      );
+      const text = extractText(articleData);
+      const lines = text.split("\n").filter(l => l.trim());
+      const title = lines[0] || `Articolo: ${topicFinal}`;
+      const content = lines.slice(1).join("\n").trim();
+      addLog(`✅ Articolo generato: "${title.slice(0, 55)}..."`, "success");
+
+      // Social posts
+      const socialResults = {};
+      for (const sid of socials) {
+        const sf = SOCIAL_FORMATS.find(s => s.id === sid);
+        addLog(`📱 Creazione post ${sf.label}...`, "info");
+        const socialSystem = `Sei un social media manager sportivo italiano esperto.
+Crea un post ${sf.label} basato sull'articolo. Usa italiano. Includi hashtag rilevanti.
+Instagram: emoji, coinvolgente, max 2200 caratteri, call to action.
+Facebook: informativo, max 1000 caratteri.
+LinkedIn: professionale, orientato a dirigenti e operatori sportivi, max 700 caratteri.
+Rispondi SOLO con il testo del post, niente altro.`;
+        const sd = await callClaude(
+          [{ role: "user", content: `Crea post ${sf.label}:\nTITOLO: ${title}\nARTICOLO: ${content.slice(0, 800)}` }],
+          socialSystem
+        );
+        socialResults[sid] = extractText(sd);
+        addLog(`✅ Post ${sf.label} pronto`, "success");
+      }
+
+      setArticles(prev => prev.map(a =>
+        a.id === id ? { ...a, title, content, socials: socialResults, status: STATUS.PENDING } : a
+      ));
+      addLog(`📋 Articolo #${id} in attesa della tua approvazione`, "highlight");
+    } catch (err) {
+      addLog(`❌ Errore generazione: ${err.message}`, "error");
+      setArticles(prev => prev.filter(a => a.id !== id));
+    }
+    setGenerating(false);
+  }, [generating, clients, addLog]);
+
+  // ── WordPress publish ─────────────────────────────────────────────────────
+  const publishToWordPress = useCallback(async (article) => {
+    const cfg = wpConfig;
+    if (!cfg.url || !cfg.user || !cfg.password) {
+      addLog("⚠️ Configura prima le credenziali WordPress nelle Impostazioni", "error");
+      return false;
+    }
+    addLog(`📤 Pubblicazione su WordPress: ${cfg.url}`, "info");
+    try {
+      const creds = btoa(`${cfg.user}:${cfg.password}`);
+      const cat = CATEGORIES.find(c => c.id === article.catId);
+      const res = await fetch(`${cfg.url}/wp-json/wp/v2/posts`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Basic ${creds}`,
+        },
+        body: JSON.stringify({
+          title: article.title,
+          content: article.content.replace(/\n/g, "<br>"),
+          status: "publish",
+          categories: [],
+          tags: [],
+          excerpt: article.content.slice(0, 160),
+        }),
+      });
+      if (res.ok) {
+        addLog(`✅ Pubblicato su WordPress con successo!`, "success");
+        return true;
+      } else {
+        const err = await res.json();
+        addLog(`❌ WP Error: ${err.message || res.status}`, "error");
+        return false;
+      }
+    } catch (e) {
+      addLog(`❌ Connessione WordPress fallita: ${e.message}`, "error");
+      return false;
+    }
+  }, [wpConfig, addLog]);
+
+  const approveArticle = useCallback(async (article) => {
+    const published = await publishToWordPress(article);
+    setArticles(prev => prev.map(a =>
+      a.id === article.id ? { ...a, status: STATUS.APPROVED, publishedToWP: published } : a
+    ));
+    setSelectedArticle(null);
+    addLog(`✅ Articolo #${article.id} approvato${published ? " e pubblicato su WP" : " (WP non configurato)"}`, "success");
+    if (article.forTarget !== "mysite") {
+      setClients(prev => prev.map(c =>
+        c.id === Number(article.forTarget) ? { ...c, articlesCount: (c.articlesCount || 0) + 1 } : c
+      ));
+    }
+  }, [publishToWordPress]);
+
+  const rejectArticle = useCallback((article) => {
+    setArticles(prev => prev.map(a => a.id === article.id ? { ...a, status: STATUS.REJECTED } : a));
+    setSelectedArticle(null);
+    addLog(`✗ Articolo #${article.id} rifiutato`, "error");
   }, []);
-
-  // ── PHASE 1: Search ───────────────────────────────────────────────────────
-  const searchLeads = useCallback(async () => {
-    if (searching) return;
-    setSearching(true);
-    const areaStr = regione === "Tutte" ? "Italia" : regione;
-    const sportStr = sport === "Tutti gli sport" ? "qualsiasi disciplina sportiva" : sport;
-
-    addLog(`🔍 Ricerca ASD/SSD: ${sportStr} · ${areaStr}`, "highlight");
-
-    const system = `Sei un ricercatore esperto di associazioni sportive italiane.
-Cerca online ASD e SSD italiane reali nella zona e sport indicati.
-Per ogni società trovata fornisci in formato JSON array:
-[
-  {
-    "name": "Nome completo ASD/SSD",
-    "sport": "disciplina",
-    "city": "città",
-    "region": "regione",
-    "email": "email se trovata o null",
-    "website": "url sito se trovato o null",
-    "facebook": "url pagina facebook se trovata o null",
-    "instagram": "handle instagram se trovato o null",
-    "phone": "telefono se trovato o null",
-    "lastWebUpdate": "data ultimo aggiornamento sito stimata o 'sconosciuta'",
-    "socialActivity": "alta/media/bassa/assente"
-  }
-]
-Restituisci SOLO il JSON array, nessun altro testo. Trova esattamente ${numResults} società reali.`;
-
-    try {
-      const data = await callClaude(
-        [{ role: "user", content: `Cerca ${numResults} ASD/SSD reali di ${sportStr} in ${areaStr}. Cerca email e contatti reali online.` }],
-        system
-      );
-      const text = extractText(data);
-      const clean = text.replace(/```json|```/g, "").trim();
-      const found = JSON.parse(clean);
-
-      const newLeads = found.map(f => ({
-        id: newLid(),
-        ...f,
-        status: LEAD_STATUS.NEW,
-        needScore: null,
-        analysis: null,
-        emailSubject: null,
-        emailBody: null,
-        createdAt: new Date(),
-      }));
-
-      setLeads(p => [...newLeads, ...p]);
-      addLog(`✅ Trovate ${newLeads.length} società`, "success");
-
-      if (autoAnalyze) {
-        for (const lead of newLeads) {
-          await analyzeLead(lead, updateLead, addLog, autoWrite);
-        }
-      }
-    } catch (e) {
-      addLog(`❌ Errore ricerca: ${e.message}`, "error");
-    }
-    setSearching(false);
-  }, [searching, regione, sport, numResults, autoAnalyze, autoWrite, addLog, updateLead]);
-
-  // ── PHASE 2: Analyze ─────────────────────────────────────────────────────
-  const analyzeLead = useCallback(async (lead, updFn, logFn, doWrite = true) => {
-    const upd = updFn || updateLead;
-    const log = logFn || addLog;
-    upd(lead.id, { status: LEAD_STATUS.ANALYZING });
-    log(`🔎 Analisi: ${lead.name}`, "info");
-
-    const system = `Sei un analista di marketing sportivo. Analizza la presenza online di questa società sportiva italiana.
-Cerca il loro sito web e social media. Valuta quanto comunicano bene o male.
-Rispondi SOLO con JSON:
-{
-  "needScore": 1-4 (1=bassa necessità, 4=urgente necessità di comunicazione),
-  "needReason": "frase breve che spiega perché hanno bisogno del servizio",
-  "siteStatus": "aggiornato/datato/assente",
-  "socialStatus": "attivo/scarso/assente",
-  "lastPost": "data ultimo post o 'sconosciuta'",
-  "notes": "osservazione chiave per personalizzare la proposta"
-}`;
-
-    try {
-      const data = await callClaude(
-        [{ role: "user", content: `Analizza la presenza online di: ${lead.name}, ${lead.sport}, ${lead.city}. ${lead.website ? `Sito: ${lead.website}` : ""} ${lead.facebook ? `Facebook: ${lead.facebook}` : ""}` }],
-        system
-      );
-      const text = extractText(data);
-      const clean = text.replace(/```json|```/g, "").trim();
-      const analysis = JSON.parse(clean);
-      upd(lead.id, { status: LEAD_STATUS.READY, needScore: analysis.needScore, analysis });
-      log(`✅ Analizzata: ${lead.name} · Bisogno ${NEED_SCORE[analysis.needScore]}`, "success");
-
-      if (doWrite) {
-        const updatedLead = { ...lead, analysis, needScore: analysis.needScore };
-        await writeEmail(updatedLead, upd, log);
-      }
-    } catch (e) {
-      log(`⚠️ Analisi fallita per ${lead.name}: ${e.message}`, "error");
-      upd(lead.id, { status: LEAD_STATUS.READY, needScore: 2, analysis: { needReason: "Analisi non disponibile", notes: "" } });
-    }
-  }, [updateLead, addLog]);
-
-  // ── PHASE 3: Write email ──────────────────────────────────────────────────
-  const writeEmail = useCallback(async (lead, updFn, logFn) => {
-    const upd = updFn || updateLead;
-    const log = logFn || addLog;
-    upd(lead.id, { status: LEAD_STATUS.WRITING });
-    log(`✍️ Scrittura email per: ${lead.name}`, "info");
-
-    const system = `Sei un esperto di sales copywriting per servizi B2B nel settore sportivo italiano.
-Scrivi un'email commerciale personalizzata e convincente per proporre il servizio SportAI a questa ASD/SSD.
-L'email deve:
-- Essere in italiano, tono professionale ma diretto
-- Dimostrare che hai guardato la loro realtà specifica (usa i dati dell'analisi)
-- NON parlare di AI o tecnologia — parla di risultati concreti
-- Essere breve (max 180 parole nel body)
-- Finire con una call to action chiara per una chiamata gratuita di 20 minuti
-
-Rispondi SOLO con JSON:
-{
-  "subject": "oggetto email accattivante",
-  "body": "testo email in HTML semplice con <p> e <strong> tags"
-}`;
-
-    const analysis = lead.analysis || {};
-    try {
-      const data = await callClaude(
-        [{ role: "user", content: `Scrivi email per: ${lead.name} (${lead.sport}, ${lead.city}).
-Analisi: ${analysis.needReason || "comunicazione scarsa"}.
-Note: ${analysis.notes || ""}.
-Stato sito: ${analysis.siteStatus || "non verificato"}.
-Stato social: ${analysis.socialStatus || "non verificato"}.
-Contatto: ${lead.email || "email non trovata"}.` }],
-        system
-      );
-      const text = extractText(data);
-      const clean = text.replace(/```json|```/g, "").trim();
-      const email = JSON.parse(clean);
-      upd(lead.id, { status: LEAD_STATUS.PENDING, emailSubject: email.subject, emailBody: email.body });
-      log(`📧 Email pronta per: ${lead.name}`, "highlight");
-    } catch (e) {
-      log(`⚠️ Scrittura email fallita per ${lead.name}`, "error");
-      upd(lead.id, { status: LEAD_STATUS.READY });
-    }
-  }, [updateLead, addLog]);
-
-  // ── Send email ────────────────────────────────────────────────────────────
-  const sendEmail = useCallback(async (lead) => {
-    if (!brevoKey) { addLog("⚠️ Inserisci la chiave API Brevo nelle Impostazioni", "error"); return; }
-    if (!lead.email) { addLog(`⚠️ Nessuna email per ${lead.name}`, "error"); return; }
-
-    addLog(`📤 Invio email a ${lead.email}...`, "info");
-    const ok = await sendViaBrevo(brevoKey, lead.email, lead.emailSubject, lead.emailBody);
-    if (ok) {
-      updateLead(lead.id, { status: LEAD_STATUS.SENT });
-      addLog(`✅ Email inviata a ${lead.name}`, "success");
-    } else {
-      addLog(`❌ Invio fallito per ${lead.name}`, "error");
-    }
-  }, [brevoKey, addLog, updateLead]);
 
   // ── Stats ─────────────────────────────────────────────────────────────────
-  const stats = {
-    total:   leads.length,
-    pending: leads.filter(l => l.status === LEAD_STATUS.PENDING).length,
-    sent:    leads.filter(l => l.status === LEAD_STATUS.SENT).length,
-    urgent:  leads.filter(l => l.needScore >= 3).length,
-  };
+  const pending   = articles.filter(a => a.status === STATUS.PENDING).length;
+  const approved  = articles.filter(a => a.status === STATUS.APPROVED).length;
+  const total     = articles.length;
+  const activeClients = clients.filter(c => c.active).length;
 
-  // ─── RENDER ────────────────────────────────────────────────────────────────
+  // ─── RENDER ───────────────────────────────────────────────────────────────
   return (
     <div style={s.root}>
       <style>{CSS}</style>
 
-      {/* HEADER */}
-      <header style={s.header}>
-        <div style={s.headerLeft}>
-          <span style={s.headerIcon}>🎯</span>
+      {/* SIDEBAR */}
+      <aside style={s.sidebar}>
+        <div style={s.brand}>
+          <span style={s.brandIcon}>⚡</span>
           <div>
-            <div style={s.headerTitle}>SportAI · Prospezione</div>
-            <div style={s.headerSub}>Ricerca automatica contatti + invio proposta</div>
+            <div style={s.brandName}>SportAI</div>
+            <div style={s.brandSub}>Content Platform</div>
           </div>
         </div>
-        <div style={s.headerStats}>
+
+        <nav style={s.nav}>
           {[
-            { v: stats.total,   l: "Lead trovati",    c: "#fff" },
-            { v: stats.urgent,  l: "Alta priorità",   c: "#C9956C" },
-            { v: stats.pending, l: "Da approvare",    c: "#E8B84B" },
-            { v: stats.sent,    l: "Email inviate",   c: "#7AAF6E" },
-          ].map(st => (
-            <div key={st.l} style={s.statBox}>
-              <div style={{ ...s.statNum, color: st.c }}>{st.v}</div>
-              <div style={s.statLbl}>{st.l}</div>
-            </div>
+            { id: "dashboard", icon: "◈", label: "Dashboard" },
+            { id: "generate",  icon: "✦", label: "Genera" },
+            { id: "review",    icon: "◉", label: `Revisione${pending > 0 ? ` (${pending})` : ""}` },
+            { id: "clients",   icon: "◎", label: "Clienti" },
+            { id: "archive",   icon: "▦", label: "Archivio" },
+            { id: "settings",  icon: "◌", label: "Impostazioni" },
+            { id: "log",       icon: "▤", label: "Log" },
+          ].map(item => (
+            <button
+              key={item.id}
+              style={{ ...s.navItem, ...(tab === item.id ? s.navActive : {}) }}
+              onClick={() => setTab(item.id)}
+            >
+              <span style={s.navIcon}>{item.icon}</span>
+              <span>{item.label}</span>
+              {item.id === "review" && pending > 0 && <span style={s.badge}>{pending}</span>}
+            </button>
           ))}
+        </nav>
+
+        <div style={s.sidebarFooter}>
+          <div style={{ ...s.scheduleChip, color: schedule !== "manual" ? "#E8B84B" : "#666" }}>
+            {schedule !== "manual" ? "⏱ Auto ON" : "⏸ Auto OFF"}
+          </div>
         </div>
-      </header>
+      </aside>
 
-      {/* TABS */}
-      <div style={s.tabs}>
-        {[
-          { id: "search",   label: "🔍 Ricerca" },
-          { id: "pipeline", label: `📋 Pipeline${stats.pending > 0 ? ` (${stats.pending})` : ""}` },
-          { id: "settings", label: "⚙️ Impostazioni" },
-          { id: "log",      label: "📊 Log" },
-        ].map(t => (
-          <button key={t.id} style={{ ...s.tab, ...(tab === t.id ? s.tabActive : {}) }} onClick={() => setTab(t.id)}>
-            {t.label}
-          </button>
-        ))}
-      </div>
+      {/* MAIN */}
+      <main style={s.main}>
 
-      <div style={s.body}>
+        {/* ── DASHBOARD ── */}
+        {tab === "dashboard" && (
+          <div style={s.page}>
+            <h1 style={s.pageTitle}>Dashboard</h1>
+            <p style={s.pageSub}>Panoramica della piattaforma SportAI</p>
 
-        {/* ── RICERCA ── */}
-        {tab === "search" && (
-          <div style={s.twoCol}>
-            <div style={s.leftCol}>
+            <div style={s.statsGrid}>
+              {[
+                { label: "Articoli totali",    value: total,         color: "#E8B84B" },
+                { label: "In attesa",          value: pending,       color: "#5B8FA8" },
+                { label: "Approvati",          value: approved,      color: "#A8C5A0" },
+                { label: "Clienti attivi",     value: activeClients, color: "#C9956C" },
+              ].map(stat => (
+                <div key={stat.label} style={s.statCard}>
+                  <div style={{ ...s.statValue, color: stat.color }}>{stat.value}</div>
+                  <div style={s.statLabel}>{stat.label}</div>
+                </div>
+              ))}
+            </div>
+
+            <div style={s.twoColGrid}>
+              {/* Recent articles */}
               <div style={s.card}>
-                <div style={s.cardTitle}>Parametri di ricerca</div>
-
-                <div style={s.field}>
-                  <label style={s.label}>Regione</label>
-                  <select style={s.select} value={regione} onChange={e => setRegione(e.target.value)}>
-                    {REGIONI.map(r => <option key={r} value={r}>{r}</option>)}
-                  </select>
-                </div>
-
-                <div style={s.field}>
-                  <label style={s.label}>Sport</label>
-                  <select style={s.select} value={sport} onChange={e => setSport(e.target.value)}>
-                    <option value="Tutti gli sport">Tutti gli sport</option>
-                    {SPORT_LIST.map(sp => <option key={sp} value={sp}>{sp}</option>)}
-                  </select>
-                </div>
-
-                <div style={s.field}>
-                  <label style={s.label}>Numero di società da trovare</label>
-                  <div style={s.numRow}>
-                    {[3, 5, 10, 15].map(n => (
-                      <button key={n} style={{ ...s.numBtn, ...(numResults === n ? s.numBtnActive : {}) }} onClick={() => setNumResults(n)}>
-                        {n}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div style={s.field}>
-                  <label style={s.label}>Automazione</label>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                    <ToggleRow
-                      label="Analisi automatica"
-                      sub="Analizza sito e social subito dopo la ricerca"
-                      value={autoAnalyze}
-                      onChange={setAutoAnalyze}
-                    />
-                    <ToggleRow
-                      label="Scrittura email automatica"
-                      sub="Scrive la proposta personalizzata dopo l'analisi"
-                      value={autoWrite}
-                      onChange={setAutoWrite}
-                    />
-                  </div>
-                </div>
-
-                <button
-                  style={{ ...s.searchBtn, opacity: searching ? 0.5 : 1, cursor: searching ? "not-allowed" : "pointer" }}
-                  onClick={searchLeads}
-                  disabled={searching}
-                >
-                  {searching ? "⏳  Ricerca in corso..." : "🔍  Avvia Ricerca"}
-                </button>
-              </div>
-
-              {/* Flow diagram */}
-              <div style={s.card}>
-                <div style={s.cardTitle}>Come funziona</div>
-                {[
-                  ["🔍", "Ricerca", "L'AI cerca online ASD/SSD reali con contatti"],
-                  ["📊", "Analisi", "Valuta sito e social, assegna punteggio di bisogno"],
-                  ["✍️", "Proposta", "Scrive email personalizzata per ogni società"],
-                  ["✅", "Approvi", "Tu leggi e decidi se inviare"],
-                  ["📤", "Invio", "Brevo invia e traccia aperture e click"],
-                ].map(([icon, title, desc]) => (
-                  <div key={title} style={s.flowRow}>
-                    <span style={s.flowIcon}>{icon}</span>
-                    <div>
-                      <div style={s.flowTitle}>{title}</div>
-                      <div style={s.flowDesc}>{desc}</div>
+                <div style={s.cardTitle}>Ultimi articoli generati</div>
+                {articles.length === 0 && <div style={s.empty}>Nessun articolo ancora</div>}
+                {articles.slice(0, 6).map(a => (
+                  <div key={a.id} style={s.miniRow} onClick={() => { setSelectedArticle(a); setTab("review"); }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={s.miniTitle}>{a.title === "Generazione in corso..." ? "⏳ " + a.topic.slice(0, 40) + "..." : a.title.slice(0, 48)}</div>
+                      <div style={s.miniMeta}>{a.clientName} · {CATEGORIES.find(c=>c.id===a.catId)?.icon}</div>
                     </div>
+                    <span style={{ color: STATUS_META[a.status].color, fontSize: 11, fontWeight: 700 }}>
+                      {STATUS_META[a.status].label}
+                    </span>
                   </div>
                 ))}
               </div>
+
+              {/* Clients overview */}
+              <div style={s.card}>
+                <div style={s.cardTitle}>Clienti</div>
+                {clients.map(c => (
+                  <div key={c.id} style={s.miniRow}>
+                    <div style={{ flex: 1 }}>
+                      <div style={s.miniTitle}>{c.name}</div>
+                      <div style={s.miniMeta}>{c.sport} · Piano {c.plan.toUpperCase()}</div>
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
+                      <span style={{ ...s.chip, background: c.active ? "#A8C5A020" : "#44444420", color: c.active ? "#A8C5A0" : "#666" }}>
+                        {c.active ? "Attivo" : "Inattivo"}
+                      </span>
+                      <span style={{ fontSize: 10, color: "#555" }}>{c.articlesCount} art.</span>
+                    </div>
+                  </div>
+                ))}
+                <button style={s.addBtn} onClick={() => setTab("clients")}>+ Gestisci clienti</button>
+              </div>
             </div>
 
-            {/* Lead list */}
-            <div style={s.rightCol}>
-              <div style={s.cardTitle}>Lead trovati ({leads.length})</div>
-              {leads.length === 0 && (
-                <div style={s.empty}>Avvia una ricerca per trovare le prime ASD/SSD</div>
-              )}
-              {leads.map(lead => (
-                <LeadCard
-                  key={lead.id}
-                  lead={lead}
-                  selected={selected?.id === lead.id}
-                  onClick={() => { setSelected(lead); setTab("pipeline"); }}
-                  onAnalyze={() => analyzeLead(lead)}
-                  onWrite={() => writeEmail(lead)}
-                />
-              ))}
+            {/* Scheduler status */}
+            <div style={s.card}>
+              <div style={s.cardTitle}>Scheduler automatico</div>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                {SCHEDULE_OPTIONS.map(opt => (
+                  <button
+                    key={opt.id}
+                    style={{ ...s.scheduleBtn, ...(schedule === opt.id ? s.scheduleBtnActive : {}) }}
+                    onClick={() => setSchedule(opt.id)}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              <p style={{ color: "#555", fontSize: 12, marginTop: 12 }}>
+                {schedule === "manual"
+                  ? "Lo scheduler è disattivato. Genera articoli manualmente dalla sezione Genera."
+                  : `✅ L'AI genererà articoli automaticamente (${SCHEDULE_OPTIONS.find(s=>s.id===schedule)?.label}) e li metterà in attesa della tua approvazione.`}
+              </p>
             </div>
           </div>
         )}
 
-        {/* ── PIPELINE ── */}
-        {tab === "pipeline" && (
-          <div style={s.twoCol}>
-            <div style={s.leftCol}>
-              <div style={s.cardTitle}>In attesa di approvazione ({stats.pending})</div>
-              {leads.filter(l => l.status === LEAD_STATUS.PENDING).length === 0 && (
-                <div style={s.empty}>Nessuna email in attesa</div>
-              )}
-              {leads.filter(l => l.status === LEAD_STATUS.PENDING).map(lead => (
-                <LeadCard
-                  key={lead.id}
-                  lead={lead}
-                  selected={selected?.id === lead.id}
-                  onClick={() => setSelected(lead)}
-                  compact
-                />
-              ))}
+        {/* ── GENERA ── */}
+        {tab === "generate" && (
+          <div style={s.page}>
+            <h1 style={s.pageTitle}>Genera Contenuto</h1>
+            <p style={s.pageSub}>L'AI cercherà online e creerà articolo + post social</p>
 
-              {leads.filter(l => l.status === LEAD_STATUS.SENT).length > 0 && (
-                <>
-                  <div style={{ ...s.cardTitle, marginTop: 24 }}>Inviate ({stats.sent})</div>
-                  {leads.filter(l => l.status === LEAD_STATUS.SENT).map(lead => (
-                    <LeadCard key={lead.id} lead={lead} selected={selected?.id === lead.id} onClick={() => setSelected(lead)} compact />
+            <div style={s.card}>
+              {/* Target */}
+              <div style={s.fieldGroup}>
+                <label style={s.label}>Genera per</label>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {[{ id: "mysite", name: "Il tuo sito (vetrina)" }, ...clients.filter(c=>c.active)].map(t => (
+                    <button
+                      key={t.id}
+                      style={{ ...s.chip, ...s.chipBtn, ...(genFor === String(t.id) ? s.chipActive : {}) }}
+                      onClick={() => setGenFor(String(t.id))}
+                    >
+                      {t.id === "mysite" ? "🌐 " : "🏟 "}{t.name || t.id}
+                    </button>
                   ))}
-                </>
+                </div>
+              </div>
+
+              {/* Category */}
+              <div style={s.fieldGroup}>
+                <label style={s.label}>Categoria</label>
+                <div style={s.catGrid}>
+                  {CATEGORIES.map(c => (
+                    <button
+                      key={c.id}
+                      style={{
+                        ...s.catBtn,
+                        borderColor: genCategory === c.id ? c.color : "#2a2a2a",
+                        background: genCategory === c.id ? c.color + "18" : "transparent",
+                      }}
+                      onClick={() => setGenCategory(c.id)}
+                    >
+                      <span style={{ fontSize: 22 }}>{c.icon}</span>
+                      <span style={{ fontSize: 11, color: genCategory === c.id ? c.color : "#666", marginTop: 4, textAlign: "center", lineHeight: 1.3 }}>
+                        {c.label}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Topic */}
+              <div style={s.fieldGroup}>
+                <label style={s.label}>Argomento specifico <span style={{ color: "#444" }}>(opzionale)</span></label>
+                <input
+                  style={s.input}
+                  placeholder="Es. Nuove regole fiscali ASD 2025 · lascia vuoto per scelta automatica"
+                  value={genTopic}
+                  onChange={e => setGenTopic(e.target.value)}
+                />
+              </div>
+
+              {/* Socials */}
+              <div style={s.fieldGroup}>
+                <label style={s.label}>Social network</label>
+                <div style={{ display: "flex", gap: 10 }}>
+                  {SOCIAL_FORMATS.map(sf => (
+                    <button
+                      key={sf.id}
+                      style={{
+                        ...s.socialBtn,
+                        borderColor: genSocials.includes(sf.id) ? sf.color : "#2a2a2a",
+                        color: genSocials.includes(sf.id) ? sf.color : "#555",
+                        background: genSocials.includes(sf.id) ? sf.color + "15" : "transparent",
+                      }}
+                      onClick={() => setGenSocials(prev =>
+                        prev.includes(sf.id) ? prev.filter(x => x !== sf.id) : [...prev, sf.id]
+                      )}
+                    >
+                      {sf.icon} {sf.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <button
+                style={{ ...s.generateBtn, opacity: generating ? 0.5 : 1, cursor: generating ? "not-allowed" : "pointer" }}
+                onClick={() => generateArticle(genCategory, genTopic, genSocials, genFor)}
+                disabled={generating}
+              >
+                {generating ? "⏳  Generazione in corso..." : "⚡  Genera Articolo + Post Social"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ── REVISIONE ── */}
+        {tab === "review" && (
+          <div style={{ ...s.page, display: "grid", gridTemplateColumns: "320px 1fr", gap: 20, height: "100%" }}>
+            {/* List */}
+            <div style={{ overflowY: "auto" }}>
+              <h1 style={s.pageTitle}>Revisione</h1>
+              <p style={s.pageSub}>Approva o rifiuta ogni contenuto</p>
+              {articles.filter(a => a.status === STATUS.PENDING).length === 0 && (
+                <div style={s.empty}>Nessun articolo da revisionare</div>
               )}
+              {articles.filter(a => a.status === STATUS.PENDING).map(a => (
+                <div
+                  key={a.id}
+                  style={{
+                    ...s.listCard,
+                    borderColor: selectedArticle?.id === a.id ? "#E8B84B" : "#1e1e1e",
+                  }}
+                  onClick={() => setSelectedArticle(a)}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                    <span style={{ fontSize: 11, color: CATEGORIES.find(c=>c.id===a.catId)?.color }}>
+                      {CATEGORIES.find(c=>c.id===a.catId)?.icon} {CATEGORIES.find(c=>c.id===a.catId)?.label}
+                    </span>
+                    {a.auto && <span style={s.autoChip}>AUTO</span>}
+                  </div>
+                  <div style={s.listCardTitle}>{a.title}</div>
+                  <div style={s.listCardMeta}>{a.clientName} · {a.createdAt?.toLocaleTimeString("it-IT")}</div>
+                </div>
+              ))}
             </div>
 
-            <div style={s.rightCol}>
-              {!selected
-                ? <div style={s.empty}>Seleziona un lead dalla lista</div>
-                : <LeadDetail
-                    lead={selected}
-                    onAnalyze={() => analyzeLead(selected)}
-                    onWrite={() => writeEmail(selected)}
-                    onSend={() => sendEmail(selected)}
-                    onReject={() => { updateLead(selected.id, { status: LEAD_STATUS.REJECTED }); setSelected(null); addLog(`✗ Scartato: ${selected.name}`, "error"); }}
-                    brevoConfigured={!!brevoKey}
+            {/* Detail */}
+            <div style={{ overflowY: "auto" }}>
+              {!selectedArticle
+                ? <div style={{ ...s.empty, marginTop: 80 }}>Seleziona un articolo dalla lista</div>
+                : <ArticleDetail
+                    article={selectedArticle}
+                    onApprove={() => approveArticle(selectedArticle)}
+                    onReject={() => rejectArticle(selectedArticle)}
+                    wpConfigured={!!(wpConfig.url && wpConfig.user && wpConfig.password)}
                   />
               }
             </div>
           </div>
         )}
 
-        {/* ── SETTINGS ── */}
-        {tab === "settings" && (
-          <div style={{ maxWidth: 600 }}>
-            <div style={s.card}>
-              <div style={s.cardTitle}>📧 Configurazione Brevo</div>
-              <p style={{ color: "#555", fontSize: 13, marginBottom: 20, lineHeight: 1.6 }}>
-                Crea un account gratuito su <strong style={{ color: "#E8B84B" }}>brevo.com</strong>, poi vai su<br />
-                <strong style={{ color: "#aaa" }}>Impostazioni → API Keys → Crea nuova chiave</strong>
-              </p>
-              {[
-                { key: "brevoKey", label: "API Key Brevo", placeholder: "xkeysib-...", val: brevoKey, set: setBrevoKey, type: "password" },
-                { key: "senderName", label: "Nome mittente", placeholder: "SportAI", val: senderName, set: setSenderName },
-                { key: "senderEmail", label: "Email mittente", placeholder: "info@sportai.it", val: senderEmail, set: setSenderEmail },
-              ].map(f => (
-                <div key={f.key} style={s.field}>
-                  <label style={s.label}>{f.label}</label>
-                  <input
-                    style={s.input}
-                    type={f.type || "text"}
-                    placeholder={f.placeholder}
-                    value={f.val}
-                    onChange={e => f.set(e.target.value)}
-                  />
-                </div>
-              ))}
-              <button style={s.searchBtn} onClick={() => setBrevoSaved(true)}>
-                {brevoSaved ? "✅ Salvato" : "💾 Salva configurazione"}
-              </button>
+        {/* ── CLIENTS ── */}
+        {tab === "clients" && (
+          <div style={s.page}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+              <div>
+                <h1 style={s.pageTitle}>Gestione Clienti</h1>
+                <p style={s.pageSub}>ASD e SSD che segui con il tuo servizio</p>
+              </div>
+              <button style={s.generateBtn} onClick={() => setShowClientModal(true)}>+ Nuovo Cliente</button>
             </div>
 
+            <div style={s.clientsGrid}>
+              {clients.map(c => {
+                const plan = PLANS.find(p => p.id === c.plan);
+                return (
+                  <div key={c.id} style={s.clientCard}>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
+                      <span style={{ ...s.planChip, background: plan?.color + "20", color: plan?.color }}>
+                        {plan?.label} {plan?.price}/mese
+                      </span>
+                      <span style={{ ...s.chip, background: c.active ? "#A8C5A020" : "#33333350", color: c.active ? "#A8C5A0" : "#555" }}>
+                        {c.active ? "Attivo" : "Inattivo"}
+                      </span>
+                    </div>
+                    <div style={s.clientName}>{c.name}</div>
+                    <div style={s.clientSport}>{c.sport}</div>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginTop: 16, paddingTop: 12, borderTop: "1px solid #1e1e1e" }}>
+                      <span style={{ color: "#555", fontSize: 12 }}>{c.articlesCount} articoli pubblicati</span>
+                      <button
+                        style={s.miniBtn}
+                        onClick={() => {
+                          setGenFor(String(c.id));
+                          setTab("generate");
+                        }}
+                      >
+                        Genera →
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Pricing reference */}
             <div style={s.card}>
-              <div style={s.cardTitle}>📋 Piano di invio consigliato</div>
-              <p style={{ color: "#666", fontSize: 13, lineHeight: 1.7 }}>
-                Brevo gratuito permette <strong style={{ color: "#E8B84B" }}>300 email/giorno</strong>. Per non finire in spam:
-              </p>
-              <br />
-              {[
-                ["Max 50-80 email/giorno", "Anche se il piano lo permette, inizia con volumi bassi"],
-                ["Personalizza sempre", "L'AI lo fa già — email generiche finiscono in spam"],
-                ["Attendi 3-5 giorni", "Prima di un follow-up manuale via telefono o WhatsApp"],
-                ["Tasso apertura target", "Un buon tasso è 30-40% — monitora da Brevo"],
-              ].map(([t, d]) => (
-                <div key={t} style={s.flowRow}>
-                  <span style={{ color: "#E8B84B", fontSize: 16 }}>›</span>
-                  <div><div style={s.flowTitle}>{t}</div><div style={s.flowDesc}>{d}</div></div>
+              <div style={s.cardTitle}>Piani disponibili</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
+                {PLANS.map(plan => (
+                  <div key={plan.id} style={{ ...s.planCard, borderColor: plan.color + "60" }}>
+                    <div style={{ color: plan.color, fontWeight: 900, fontSize: 18 }}>{plan.label}</div>
+                    <div style={{ color: "#fff", fontSize: 24, fontWeight: 900, margin: "8px 0" }}>{plan.price}<span style={{ fontSize: 13, color: "#555" }}>/mese</span></div>
+                    <div style={{ color: "#666", fontSize: 13 }}>{plan.articles === 99 ? "Articoli illimitati" : `${plan.articles} articoli/mese`}</div>
+                    <div style={{ color: "#555", fontSize: 12, marginTop: 8 }}>+ Post social inclusi</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── ARCHIVE ── */}
+        {tab === "archive" && (
+          <div style={s.page}>
+            <h1 style={s.pageTitle}>Archivio</h1>
+            <p style={s.pageSub}>Tutti gli articoli generati ({total} totali)</p>
+
+            {articles.length === 0 && <div style={s.empty}>Nessun articolo ancora generato</div>}
+
+            <div style={s.archiveGrid}>
+              {articles.map(a => (
+                <div
+                  key={a.id}
+                  style={s.archiveCard}
+                  onClick={() => { setSelectedArticle(a); setTab("review"); }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
+                    <span style={{ fontSize: 20 }}>{CATEGORIES.find(c=>c.id===a.catId)?.icon}</span>
+                    <span style={{ color: STATUS_META[a.status].color, fontSize: 11, fontWeight: 700 }}>
+                      {STATUS_META[a.status].label}
+                    </span>
+                  </div>
+                  <div style={s.archiveTitle}>{a.title.slice(0, 70)}{a.title.length > 70 ? "..." : ""}</div>
+                  <div style={s.archiveMeta}>{a.clientName}</div>
+                  <div style={s.archiveDate}>{a.createdAt?.toLocaleDateString("it-IT")}</div>
                 </div>
               ))}
             </div>
           </div>
         )}
 
+        {/* ── SETTINGS ── */}
+        {tab === "settings" && (
+          <div style={s.page}>
+            <h1 style={s.pageTitle}>Impostazioni</h1>
+            <p style={s.pageSub}>Configura WordPress e lo scheduler</p>
+
+            <div style={s.card}>
+              <div style={s.cardTitle}>🔌 Connessione WordPress (il tuo sito)</div>
+              <p style={{ color: "#555", fontSize: 13, marginBottom: 20 }}>
+                Inserisci le credenziali del tuo WordPress. Vai su <strong style={{ color: "#E8B84B" }}>Utenti → Il tuo profilo → Password applicazione</strong> per generare una password sicura.
+              </p>
+              {[
+                { key: "url",      label: "URL WordPress",        placeholder: "https://tuosito.it" },
+                { key: "user",     label: "Nome utente",          placeholder: "admin" },
+                { key: "password", label: "Password applicazione", placeholder: "xxxx xxxx xxxx xxxx" },
+              ].map(field => (
+                <div key={field.key} style={s.fieldGroup}>
+                  <label style={s.label}>{field.label}</label>
+                  <input
+                    style={s.input}
+                    type={field.key === "password" ? "password" : "text"}
+                    placeholder={field.placeholder}
+                    value={wpConfig[field.key]}
+                    onChange={e => setWpConfig(prev => ({ ...prev, [field.key]: e.target.value }))}
+                  />
+                </div>
+              ))}
+              <button
+                style={s.generateBtn}
+                onClick={() => { setWpSaved(true); addLog("💾 Configurazione WordPress salvata", "success"); }}
+              >
+                {wpSaved ? "✅ Salvato" : "💾 Salva configurazione"}
+              </button>
+            </div>
+
+            <div style={s.card}>
+              <div style={s.cardTitle}>⏱ Scheduler automatico</div>
+              <p style={{ color: "#555", fontSize: 13, marginBottom: 20 }}>
+                Imposta la frequenza di generazione automatica. Gli articoli verranno sempre messi in attesa della tua approvazione prima della pubblicazione.
+              </p>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                {SCHEDULE_OPTIONS.map(opt => (
+                  <button
+                    key={opt.id}
+                    style={{ ...s.scheduleBtn, ...(schedule === opt.id ? s.scheduleBtnActive : {}) }}
+                    onClick={() => setSchedule(opt.id)}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* ── LOG ── */}
         {tab === "log" && (
-          <div>
-            <div style={s.cardTitle}>Log operazioni</div>
+          <div style={s.page}>
+            <h1 style={s.pageTitle}>Log di Sistema</h1>
+            <p style={s.pageSub}>Traccia di tutte le operazioni</p>
             <div style={s.logBox} ref={logRef}>
-              {log.length === 0 && <div style={{ color: "#333" }}>Nessun evento</div>}
+              {log.length === 0 && <div style={{ color: "#333" }}>Nessun evento registrato</div>}
               {log.map((l, i) => (
                 <div key={i} style={{
                   fontFamily: "monospace", fontSize: 12, marginBottom: 5,
-                  color: l.type === "error" ? "#C97B6C" : l.type === "success" ? "#7AAF6E" : l.type === "highlight" ? "#E8B84B" : "#555"
+                  color: l.type === "error" ? "#C97B6C" : l.type === "success" ? "#A8C5A0" : l.type === "highlight" ? "#E8B84B" : "#555"
                 }}>
                   <span style={{ color: "#333", marginRight: 10 }}>[{l.ts}]</span>{l.msg}
                 </div>
@@ -537,176 +675,116 @@ Contatto: ${lead.email || "email non trovata"}.` }],
             </div>
           </div>
         )}
-      </div>
-    </div>
-  );
-}
+      </main>
 
-// ─── LEAD CARD ────────────────────────────────────────────────────────────────
-function LeadCard({ lead, selected, onClick, onAnalyze, onWrite, compact }) {
-  const sm = STATUS_META[lead.status];
-  return (
-    <div style={{ ...s.leadCard, borderColor: selected ? "#E8B84B" : "#1e1e1e" }} onClick={onClick}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
-        <div style={s.leadName}>{lead.name}</div>
-        <span style={{ color: sm.color, fontSize: 11, fontWeight: 700, flexShrink: 0 }}>{sm.label}</span>
-      </div>
-      <div style={s.leadMeta}>{lead.sport} · {lead.city}, {lead.region}</div>
-      {lead.needScore && (
-        <div style={{ display: "flex", gap: 8, marginTop: 6, alignItems: "center" }}>
-          <NeedBar score={lead.needScore} />
-          <span style={{ color: NEED_COLOR[lead.needScore], fontSize: 11 }}>
-            Bisogno {NEED_SCORE[lead.needScore]}
-          </span>
-        </div>
-      )}
-      {!compact && lead.status === LEAD_STATUS.NEW && (
-        <button style={s.miniActionBtn} onClick={e => { e.stopPropagation(); onAnalyze(); }}>
-          Analizza →
-        </button>
-      )}
-      {!compact && lead.status === LEAD_STATUS.READY && (
-        <button style={s.miniActionBtn} onClick={e => { e.stopPropagation(); onWrite(); }}>
-          Scrivi email →
-        </button>
+      {/* CLIENT MODAL */}
+      {showClientModal && (
+        <ClientModal
+          onSave={(client) => {
+            setClients(prev => [...prev, { ...client, id: Date.now(), articlesCount: 0 }]);
+            setShowClientModal(false);
+            addLog(`✅ Nuovo cliente aggiunto: ${client.name}`, "success");
+          }}
+          onClose={() => setShowClientModal(false)}
+        />
       )}
     </div>
   );
 }
 
-// ─── LEAD DETAIL ──────────────────────────────────────────────────────────────
-function LeadDetail({ lead, onAnalyze, onWrite, onSend, onReject, brevoConfigured }) {
-  const [emailTab, setEmailTab] = useState("preview");
-  const sm = STATUS_META[lead.status];
+// ─── ARTICLE DETAIL ───────────────────────────────────────────────────────────
+function ArticleDetail({ article, onApprove, onReject, wpConfigured }) {
+  const [section, setSection] = useState("article");
+  const cat = CATEGORIES.find(c => c.id === article.catId);
 
   return (
     <div style={s.detail}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
+      <div style={{ display: "flex", gap: 12, alignItems: "flex-start", marginBottom: 16 }}>
+        <span style={{ fontSize: 28 }}>{cat?.icon}</span>
         <div>
-          <div style={{ color: "#E8B84B", fontSize: 11, textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>
-            {lead.sport} · {lead.city}, {lead.region}
+          <div style={{ color: cat?.color, fontSize: 11, textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>
+            {cat?.label} · {article.clientName}
           </div>
-          <div style={{ color: "#fff", fontSize: 17, fontWeight: 700 }}>{lead.name}</div>
+          <div style={{ color: "#fff", fontSize: 17, fontWeight: 700, lineHeight: 1.4 }}>{article.title}</div>
         </div>
-        <span style={{ color: sm.color, fontSize: 12, fontWeight: 700 }}>{sm.label}</span>
       </div>
 
-      {/* Contact info */}
-      <div style={s.infoGrid}>
+      {/* Sub tabs */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
         {[
-          ["Email", lead.email || "—"],
-          ["Telefono", lead.phone || "—"],
-          ["Sito web", lead.website || "—"],
-          ["Instagram", lead.instagram || "—"],
-        ].map(([k, v]) => (
-          <div key={k} style={s.infoRow}>
-            <span style={s.infoKey}>{k}</span>
-            <span style={s.infoVal}>{v}</span>
-          </div>
+          { id: "article", label: "📄 Articolo" },
+          ...SOCIAL_FORMATS.filter(sf => article.socials?.[sf.id]).map(sf => ({ id: sf.id, label: `${sf.icon} ${sf.label}` }))
+        ].map(t => (
+          <button
+            key={t.id}
+            style={{ ...s.subTab, ...(section === t.id ? s.subTabActive : {}) }}
+            onClick={() => setSection(t.id)}
+          >
+            {t.label}
+          </button>
         ))}
       </div>
 
-      {/* Analysis */}
-      {lead.analysis && (
-        <div style={s.analysisBox}>
-          <div style={{ display: "flex", gap: 16, marginBottom: 10 }}>
-            <div>
-              <div style={s.infoKey}>Punteggio bisogno</div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
-                <NeedBar score={lead.needScore} large />
-                <span style={{ color: NEED_COLOR[lead.needScore], fontWeight: 700 }}>{NEED_SCORE[lead.needScore]}</span>
-              </div>
-            </div>
-            <div>
-              <div style={s.infoKey}>Sito web</div>
-              <div style={{ color: "#ccc", fontSize: 12, marginTop: 4 }}>{lead.analysis.siteStatus || "—"}</div>
-            </div>
-            <div>
-              <div style={s.infoKey}>Social</div>
-              <div style={{ color: "#ccc", fontSize: 12, marginTop: 4 }}>{lead.analysis.socialStatus || "—"}</div>
-            </div>
-          </div>
-          <div style={s.infoKey}>Motivo</div>
-          <div style={{ color: "#bbb", fontSize: 13, marginTop: 4 }}>{lead.analysis.needReason}</div>
-          {lead.analysis.notes && (
-            <>
-              <div style={{ ...s.infoKey, marginTop: 8 }}>Note personalizzazione</div>
-              <div style={{ color: "#888", fontSize: 12, marginTop: 4 }}>{lead.analysis.notes}</div>
-            </>
-          )}
+      <div style={s.contentBox}>
+        <p style={{ color: "#ccc", lineHeight: 1.75, fontSize: 14, whiteSpace: "pre-wrap", margin: 0 }}>
+          {section === "article" ? article.content : (article.socials?.[section] || "—")}
+        </p>
+      </div>
+
+      {article.status === STATUS.PENDING && (
+        <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
+          <button style={s.approveBtn} onClick={onApprove}>
+            ✅ Approva{wpConfigured ? " e Pubblica su WP" : ""}
+          </button>
+          <button style={s.rejectBtn} onClick={onReject}>✗ Rifiuta</button>
         </div>
       )}
+      {article.status !== STATUS.PENDING && (
+        <div style={{ marginTop: 16, padding: "10px 16px", borderRadius: 8, background: "#111", color: STATUS_META[article.status].color, fontSize: 13 }}>
+          {STATUS_META[article.status].label}{article.publishedToWP ? " · Pubblicato su WordPress" : ""}
+        </div>
+      )}
+    </div>
+  );
+}
 
-      {/* Email preview */}
-      {lead.emailSubject && (
-        <div style={{ marginTop: 16 }}>
-          <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-            {["preview", "html"].map(t => (
-              <button key={t} style={{ ...s.subTab, ...(emailTab === t ? s.subTabActive : {}) }} onClick={() => setEmailTab(t)}>
-                {t === "preview" ? "📧 Anteprima" : "🔧 HTML"}
+// ─── CLIENT MODAL ─────────────────────────────────────────────────────────────
+function ClientModal({ onSave, onClose }) {
+  const [form, setForm] = useState({ name: "", sport: "", plan: "base", active: true, wpUrl: "" });
+  const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
+
+  return (
+    <div style={s.modalOverlay}>
+      <div style={s.modal}>
+        <div style={s.cardTitle}>Nuovo Cliente</div>
+        {[
+          { key: "name",   label: "Nome ASD/SSD",  placeholder: "ASD Olimpia Calcio Roma" },
+          { key: "sport",  label: "Sport",          placeholder: "Calcio, Nuoto, Basket..." },
+          { key: "wpUrl",  label: "URL WordPress cliente (opzionale)", placeholder: "https://asd-olimpia.it" },
+        ].map(f => (
+          <div key={f.key} style={s.fieldGroup}>
+            <label style={s.label}>{f.label}</label>
+            <input style={s.input} placeholder={f.placeholder} value={form[f.key]} onChange={e => set(f.key, e.target.value)} />
+          </div>
+        ))}
+        <div style={s.fieldGroup}>
+          <label style={s.label}>Piano</label>
+          <div style={{ display: "flex", gap: 8 }}>
+            {PLANS.map(p => (
+              <button
+                key={p.id}
+                style={{ ...s.scheduleBtn, ...(form.plan === p.id ? s.scheduleBtnActive : {}) }}
+                onClick={() => set("plan", p.id)}
+              >
+                {p.label} {p.price}
               </button>
             ))}
           </div>
-          <div style={s.infoKey}>Oggetto: <span style={{ color: "#ccc", fontWeight: 400 }}>{lead.emailSubject}</span></div>
-          <div style={s.emailBox}>
-            {emailTab === "preview"
-              ? <div style={{ color: "#ccc", fontSize: 13, lineHeight: 1.7 }} dangerouslySetInnerHTML={{ __html: lead.emailBody }} />
-              : <pre style={{ color: "#888", fontSize: 11, whiteSpace: "pre-wrap", margin: 0 }}>{lead.emailBody}</pre>
-            }
-          </div>
         </div>
-      )}
-
-      {/* Actions */}
-      <div style={{ display: "flex", gap: 10, marginTop: 16, flexWrap: "wrap" }}>
-        {lead.status === LEAD_STATUS.NEW && (
-          <button style={s.actionBtn} onClick={onAnalyze}>📊 Analizza</button>
-        )}
-        {lead.status === LEAD_STATUS.READY && (
-          <button style={s.actionBtn} onClick={onWrite}>✍️ Scrivi email</button>
-        )}
-        {lead.status === LEAD_STATUS.PENDING && (
-          <>
-            <button
-              style={{ ...s.actionBtn, background: "#7AAF6E", flex: 1 }}
-              onClick={onSend}
-            >
-              {brevoConfigured ? "📤 Approva e Invia" : "📤 Approva (configura Brevo per inviare)"}
-            </button>
-            <button style={s.rejectBtn} onClick={onReject}>✗ Scarta</button>
-          </>
-        )}
-        {lead.status === LEAD_STATUS.SENT && (
-          <div style={{ color: "#7AAF6E", fontSize: 13 }}>✅ Email inviata — attendi risposta 3-5 giorni poi chiama</div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ─── SMALL COMPONENTS ─────────────────────────────────────────────────────────
-function NeedBar({ score, large }) {
-  const w = large ? 60 : 40;
-  const h = large ? 8 : 5;
-  return (
-    <div style={{ width: w, height: h, background: "#1e1e1e", borderRadius: 3, overflow: "hidden" }}>
-      <div style={{ width: `${(score / 4) * 100}%`, height: "100%", background: NEED_COLOR[score], borderRadius: 3 }} />
-    </div>
-  );
-}
-
-function ToggleRow({ label, sub, value, onChange }) {
-  return (
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", background: "#0A0A0A", borderRadius: 8, border: "1px solid #1e1e1e" }}>
-      <div>
-        <div style={{ color: "#ccc", fontSize: 13 }}>{label}</div>
-        <div style={{ color: "#555", fontSize: 11, marginTop: 2 }}>{sub}</div>
-      </div>
-      <div
-        style={{ width: 40, height: 22, borderRadius: 11, background: value ? "#E8B84B" : "#2a2a2a", cursor: "pointer", position: "relative", transition: "background 0.2s", flexShrink: 0 }}
-        onClick={() => onChange(!value)}
-      >
-        <div style={{ position: "absolute", top: 3, left: value ? 20 : 3, width: 16, height: 16, borderRadius: "50%", background: "#fff", transition: "left 0.2s" }} />
+        <div style={{ display: "flex", gap: 12, marginTop: 20 }}>
+          <button style={s.approveBtn} onClick={() => form.name && onSave(form)}>Aggiungi Cliente</button>
+          <button style={s.rejectBtn} onClick={onClose}>Annulla</button>
+        </div>
       </div>
     </div>
   );
@@ -714,61 +792,80 @@ function ToggleRow({ label, sub, value, onChange }) {
 
 // ─── STYLES ───────────────────────────────────────────────────────────────────
 const s = {
-  root:      { minHeight: "100vh", background: "#0A0A0A", color: "#fff", fontFamily: "'DM Mono', 'Courier New', monospace", display: "flex", flexDirection: "column" },
-  header:    { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "18px 24px", borderBottom: "1px solid #161616", background: "#0D0D0D", flexWrap: "wrap", gap: 12 },
-  headerLeft: { display: "flex", alignItems: "center", gap: 14 },
-  headerIcon: { fontSize: 28, filter: "drop-shadow(0 0 6px #E8B84B)" },
-  headerTitle: { fontSize: 17, fontWeight: 900, color: "#fff", letterSpacing: 1 },
-  headerSub:  { fontSize: 10, color: "#E8B84B", letterSpacing: 1, marginTop: 2 },
-  headerStats: { display: "flex", gap: 12 },
-  statBox:   { display: "flex", flexDirection: "column", alignItems: "center", padding: "6px 14px", border: "1px solid #1e1e1e", borderRadius: 8 },
-  statNum:   { fontSize: 20, fontWeight: 900 },
-  statLbl:   { fontSize: 9, color: "#555", textTransform: "uppercase", letterSpacing: 1, marginTop: 2 },
-  tabs:      { display: "flex", borderBottom: "1px solid #161616", background: "#0D0D0D", padding: "0 16px" },
-  tab:       { background: "none", border: "none", color: "#555", padding: "13px 18px", cursor: "pointer", fontSize: 13, borderBottom: "2px solid transparent", transition: "all 0.15s" },
-  tabActive:  { color: "#E8B84B", borderBottomColor: "#E8B84B" },
-  body:      { flex: 1, padding: 20, overflowY: "auto" },
-  twoCol:    { display: "grid", gridTemplateColumns: "340px 1fr", gap: 20, height: "100%" },
-  leftCol:   { overflowY: "auto", display: "flex", flexDirection: "column", gap: 16 },
-  rightCol:  { overflowY: "auto" },
-  card:      { background: "#0F0F0F", border: "1px solid #1a1a1a", borderRadius: 12, padding: 18 },
-  cardTitle: { fontSize: 11, color: "#E8B84B", textTransform: "uppercase", letterSpacing: 2, marginBottom: 14, fontWeight: 700 },
-  field:     { marginBottom: 18 },
-  label:     { display: "block", fontSize: 10, color: "#555", textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 7 },
-  select:    { width: "100%", background: "#0A0A0A", border: "1px solid #1e1e1e", borderRadius: 7, color: "#ddd", padding: "10px 12px", fontSize: 13, outline: "none", fontFamily: "inherit" },
-  input:     { width: "100%", background: "#0A0A0A", border: "1px solid #1e1e1e", borderRadius: 7, color: "#ddd", padding: "10px 12px", fontSize: 13, outline: "none", boxSizing: "border-box", fontFamily: "inherit" },
-  numRow:    { display: "flex", gap: 8 },
-  numBtn:    { padding: "8px 16px", background: "none", border: "1px solid #2a2a2a", borderRadius: 7, color: "#555", cursor: "pointer", fontSize: 14, fontWeight: 700 },
-  numBtnActive: { borderColor: "#E8B84B", color: "#E8B84B" },
-  searchBtn: { width: "100%", padding: "14px", background: "linear-gradient(135deg, #E8B84B, #C9956C)", border: "none", borderRadius: 9, color: "#000", fontSize: 13, fontWeight: 900, cursor: "pointer", letterSpacing: 2, textTransform: "uppercase" },
-  flowRow:   { display: "flex", gap: 12, alignItems: "flex-start", padding: "8px 0", borderBottom: "1px solid #141414" },
-  flowIcon:  { fontSize: 18, flexShrink: 0, marginTop: 2 },
-  flowTitle: { fontSize: 13, color: "#ccc", fontWeight: 700 },
-  flowDesc:  { fontSize: 11, color: "#555", marginTop: 2 },
-  leadCard:  { background: "#0F0F0F", border: "1px solid #1e1e1e", borderRadius: 10, padding: "12px 14px", marginBottom: 10, cursor: "pointer", transition: "all 0.15s" },
-  leadName:  { fontSize: 13, fontWeight: 700, color: "#ddd", lineHeight: 1.3 },
-  leadMeta:  { fontSize: 11, color: "#555", marginTop: 3 },
-  miniActionBtn: { marginTop: 8, background: "none", border: "1px solid #2a2a2a", borderRadius: 6, color: "#E8B84B", padding: "4px 10px", cursor: "pointer", fontSize: 11 },
-  detail:    { background: "#0F0F0F", border: "1px solid #1a1a1a", borderRadius: 12, padding: 22 },
-  infoGrid:  { background: "#0A0A0A", borderRadius: 8, padding: "10px 14px", marginBottom: 14 },
-  infoRow:   { display: "flex", justifyContent: "space-between", padding: "5px 0", borderBottom: "1px solid #141414" },
-  infoKey:   { fontSize: 10, color: "#555", textTransform: "uppercase", letterSpacing: 1 },
-  infoVal:   { fontSize: 12, color: "#aaa" },
-  analysisBox: { background: "#0A0A0A", borderRadius: 8, padding: "12px 14px", marginBottom: 14, border: "1px solid #1e1e1e" },
-  emailBox:  { background: "#0A0A0A", border: "1px solid #1e1e1e", borderRadius: 8, padding: 16, maxHeight: 280, overflowY: "auto", marginTop: 8 },
-  subTab:    { padding: "5px 12px", background: "none", border: "1px solid #2a2a2a", borderRadius: 6, color: "#555", cursor: "pointer", fontSize: 11 },
+  root:        { display: "flex", height: "100vh", background: "#0C0C0C", color: "#fff", fontFamily: "'DM Mono', 'Fira Code', monospace", overflow: "hidden" },
+  sidebar:     { width: 220, background: "#0A0A0A", borderRight: "1px solid #161616", display: "flex", flexDirection: "column", padding: "24px 0", flexShrink: 0 },
+  brand:       { display: "flex", alignItems: "center", gap: 12, padding: "0 20px 28px", borderBottom: "1px solid #161616", marginBottom: 16 },
+  brandIcon:   { fontSize: 26, filter: "drop-shadow(0 0 6px #E8B84B)" },
+  brandName:   { fontSize: 16, fontWeight: 900, color: "#fff", letterSpacing: 2 },
+  brandSub:    { fontSize: 9, color: "#E8B84B", letterSpacing: 1.5, textTransform: "uppercase", marginTop: 2 },
+  nav:         { flex: 1, padding: "0 12px", display: "flex", flexDirection: "column", gap: 2 },
+  navItem:     { display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 8, background: "none", border: "none", color: "#444", cursor: "pointer", fontSize: 13, textAlign: "left", transition: "all 0.15s", position: "relative" },
+  navActive:   { background: "#161616", color: "#E8B84B" },
+  navIcon:     { fontSize: 14, width: 16, textAlign: "center" },
+  badge:       { marginLeft: "auto", background: "#E8B84B", color: "#000", borderRadius: 20, fontSize: 10, fontWeight: 900, padding: "1px 6px" },
+  sidebarFooter: { padding: "16px 20px", borderTop: "1px solid #161616" },
+  scheduleChip: { fontSize: 11, letterSpacing: 1 },
+  main:        { flex: 1, overflowY: "auto", padding: 28 },
+  page:        { maxWidth: 1000, margin: "0 auto" },
+  pageTitle:   { fontSize: 22, fontWeight: 900, color: "#fff", letterSpacing: 1, marginBottom: 4 },
+  pageSub:     { color: "#444", fontSize: 13, marginBottom: 28 },
+  statsGrid:   { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 24 },
+  statCard:    { background: "#0F0F0F", border: "1px solid #1a1a1a", borderRadius: 12, padding: "20px", textAlign: "center" },
+  statValue:   { fontSize: 32, fontWeight: 900 },
+  statLabel:   { fontSize: 11, color: "#444", marginTop: 4, textTransform: "uppercase", letterSpacing: 1 },
+  twoColGrid:  { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 20 },
+  card:        { background: "#0F0F0F", border: "1px solid #1a1a1a", borderRadius: 12, padding: 20, marginBottom: 20 },
+  cardTitle:   { fontSize: 12, color: "#E8B84B", textTransform: "uppercase", letterSpacing: 2, marginBottom: 16, fontWeight: 700 },
+  miniRow:     { display: "flex", alignItems: "center", gap: 12, padding: "10px 0", borderBottom: "1px solid #141414", cursor: "pointer" },
+  miniTitle:   { fontSize: 13, color: "#ccc", marginBottom: 2 },
+  miniMeta:    { fontSize: 11, color: "#444" },
+  addBtn:      { marginTop: 12, background: "none", border: "1px solid #1e1e1e", borderRadius: 8, color: "#555", padding: "8px 16px", cursor: "pointer", fontSize: 12, width: "100%" },
+  chip:        { fontSize: 11, padding: "2px 8px", borderRadius: 20 },
+  chipBtn:     { cursor: "pointer", border: "1px solid #2a2a2a" },
+  chipActive:  { borderColor: "#E8B84B", color: "#E8B84B", background: "#E8B84B15" },
+  catGrid:     { display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10 },
+  catBtn:      { display: "flex", flexDirection: "column", alignItems: "center", padding: "14px 8px", border: "1px solid #2a2a2a", borderRadius: 10, cursor: "pointer", background: "transparent", transition: "all 0.15s", minHeight: 80 },
+  fieldGroup:  { marginBottom: 20 },
+  label:       { display: "block", fontSize: 11, color: "#555", textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 8 },
+  input:       { width: "100%", background: "#0A0A0A", border: "1px solid #1e1e1e", borderRadius: 8, color: "#ddd", padding: "11px 14px", fontSize: 13, outline: "none", boxSizing: "border-box", fontFamily: "inherit" },
+  socialBtn:   { padding: "10px 18px", border: "1px solid", borderRadius: 8, cursor: "pointer", fontSize: 13, transition: "all 0.15s" },
+  generateBtn: { width: "100%", padding: "15px", background: "linear-gradient(135deg, #E8B84B, #C9956C)", border: "none", borderRadius: 10, color: "#000", fontSize: 14, fontWeight: 900, letterSpacing: 2, textTransform: "uppercase", cursor: "pointer" },
+  scheduleBtn: { padding: "9px 16px", background: "none", border: "1px solid #2a2a2a", borderRadius: 8, color: "#555", cursor: "pointer", fontSize: 12 },
+  scheduleBtnActive: { borderColor: "#E8B84B", color: "#E8B84B" },
+  listCard:    { background: "#0F0F0F", border: "1px solid #1e1e1e", borderRadius: 10, padding: "14px 16px", marginBottom: 10, cursor: "pointer", transition: "all 0.15s" },
+  listCardTitle: { fontSize: 13, fontWeight: 700, color: "#ddd", marginBottom: 6, lineHeight: 1.4 },
+  listCardMeta: { fontSize: 11, color: "#444" },
+  autoChip:    { fontSize: 9, background: "#E8B84B20", color: "#E8B84B", padding: "2px 6px", borderRadius: 20, letterSpacing: 1 },
+  detail:      { background: "#0F0F0F", border: "1px solid #1a1a1a", borderRadius: 12, padding: 24 },
+  subTab:      { padding: "6px 12px", background: "none", border: "1px solid #2a2a2a", borderRadius: 6, color: "#555", cursor: "pointer", fontSize: 12 },
   subTabActive: { borderColor: "#E8B84B", color: "#E8B84B" },
-  actionBtn: { padding: "11px 18px", background: "#1e1e1e", border: "1px solid #2a2a2a", borderRadius: 8, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 700 },
-  rejectBtn: { padding: "11px 16px", background: "none", border: "1px solid #C97B6C", borderRadius: 8, color: "#C97B6C", cursor: "pointer", fontSize: 13 },
-  logBox:    { background: "#070707", border: "1px solid #141414", borderRadius: 10, padding: 18, height: 480, overflowY: "auto" },
-  empty:     { color: "#2a2a2a", textAlign: "center", padding: "40px 0", fontSize: 13 },
+  contentBox:  { background: "#0A0A0A", border: "1px solid #1a1a1a", borderRadius: 10, padding: 20, minHeight: 200, maxHeight: 400, overflowY: "auto" },
+  approveBtn:  { flex: 1, padding: "12px", background: "#A8C5A0", border: "none", borderRadius: 8, color: "#000", fontWeight: 900, cursor: "pointer", fontSize: 13 },
+  rejectBtn:   { padding: "12px 20px", background: "none", border: "1px solid #C97B6C", borderRadius: 8, color: "#C97B6C", cursor: "pointer", fontSize: 13 },
+  archiveGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px,1fr))", gap: 14 },
+  archiveCard: { background: "#0F0F0F", border: "1px solid #1a1a1a", borderRadius: 12, padding: 18, cursor: "pointer", transition: "all 0.15s" },
+  archiveTitle: { fontSize: 13, fontWeight: 700, color: "#ccc", marginBottom: 8, lineHeight: 1.4 },
+  archiveMeta: { fontSize: 11, color: "#E8B84B", marginBottom: 4 },
+  archiveDate: { fontSize: 10, color: "#333" },
+  clientsGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px,1fr))", gap: 16, marginBottom: 24 },
+  clientCard:  { background: "#0F0F0F", border: "1px solid #1a1a1a", borderRadius: 12, padding: 20 },
+  clientName:  { fontSize: 15, fontWeight: 700, color: "#fff", marginBottom: 4 },
+  clientSport: { fontSize: 12, color: "#555" },
+  planChip:    { fontSize: 11, padding: "3px 10px", borderRadius: 20, fontWeight: 700 },
+  planCard:    { border: "1px solid", borderRadius: 10, padding: 16 },
+  miniBtn:     { background: "none", border: "1px solid #2a2a2a", borderRadius: 6, color: "#E8B84B", padding: "4px 10px", cursor: "pointer", fontSize: 11 },
+  logBox:      { background: "#070707", border: "1px solid #141414", borderRadius: 10, padding: 20, height: 520, overflowY: "auto" },
+  modalOverlay: { position: "fixed", inset: 0, background: "#000000cc", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 },
+  modal:       { background: "#0F0F0F", border: "1px solid #2a2a2a", borderRadius: 16, padding: 32, width: 480, maxWidth: "90vw" },
+  empty:       { color: "#2a2a2a", textAlign: "center", padding: "40px 0", fontSize: 14 },
 };
 
 const CSS = `
   @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&display=swap');
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  select option { background: #111; }
   ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: #222; border-radius: 4px; }
-  button:hover { filter: brightness(1.12); }
+  button:hover { filter: brightness(1.15); }
 `;
+
