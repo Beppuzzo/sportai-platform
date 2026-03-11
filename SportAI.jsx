@@ -201,7 +201,13 @@ Rispondi SOLO con il testo del post, niente altro.`;
           title: article.title,
           content: article.content.replace(/\n/g, "<br>"),
           status: "publish",
-          categories: [],
+          categories: ({
+            comunicazione: [14, 11],
+            regolamento:   [13, 12],
+            news:          [69, 11],
+            fiscalita:     [12, 11],
+            normative:     [13, 11],
+          }[article.catId] || [11]),
           tags: [],
           excerpt: article.content.slice(0, 160),
         }),
@@ -597,6 +603,17 @@ Rispondi SOLO con il testo del post, niente altro.`;
                   <div style={s.archiveTitle}>{a.title.slice(0, 70)}{a.title.length > 70 ? "..." : ""}</div>
                   <div style={s.archiveMeta}>{a.clientName}</div>
                   <div style={s.archiveDate}>{a.createdAt?.toLocaleDateString("it-IT")}</div>
+                  {a.status === STATUS.APPROVED && !a.publishedToWP && (
+                    <button
+                      style={{ ...s.miniBtn, marginTop: 10, width: "100%", textAlign: "center", color: "#E8B84B", borderColor: "#E8B84B40" }}
+                      onClick={(e) => { e.stopPropagation(); publishToWordPress(a).then(ok => { if(ok) setArticles(prev => prev.map(x => x.id === a.id ? { ...x, publishedToWP: true } : x)); }); }}
+                    >
+                      📤 Pubblica su WP
+                    </button>
+                  )}
+                  {a.status === STATUS.APPROVED && a.publishedToWP && (
+                    <div style={{ marginTop: 10, fontSize: 10, color: "#A8C5A0", textAlign: "center" }}>✓ Pubblicato su WordPress</div>
+                  )}
                 </div>
               ))}
             </div>
