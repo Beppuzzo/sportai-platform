@@ -50,7 +50,7 @@ const newId = () => _articleId++;
 
 // ─── API HELPERS ──────────────────────────────────────────────────────────────
 async function callClaude(messages, system) {
-  const res = await fetch("/api/claude", {
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -503,8 +503,9 @@ Rispondi SOLO con il testo del post, niente altro.`;
                 ? <div style={{ ...s.empty, marginTop: 80 }}>Seleziona un articolo dalla lista</div>
                 : <ArticleDetail
                     article={selectedArticle}
-                    onApprove={() => approveArticle(selectedArticle)}
+                    onApprove={(edited) => approveArticle(edited || selectedArticle)}
                     onReject={() => rejectArticle(selectedArticle)}
+                    onEdit={(edited) => { setArticles(prev => prev.map(a => a.id === edited.id ? edited : a)); setSelectedArticle(edited); }}
                     wpConfigured={!!(wpConfig.url && wpConfig.user && wpConfig.password)}
                   />
               }
@@ -693,20 +694,52 @@ Rispondi SOLO con il testo del post, niente altro.`;
 }
 
 // ─── ARTICLE DETAIL ───────────────────────────────────────────────────────────
-function ArticleDetail({ article, onApprove, onReject, wpConfigured }) {
+function ArticleDetail({ article, onApprove, onReject, onEdit, wpConfigured }) {
   const [section, setSection] = useState("article");
+  const [editing, setEditing] = useState(false);
+  const [editTitle, setEditTitle] = useState(article.title);
+  const [editContent, setEditContent] = useState(article.content);
+  const [editSocials, setEditSocials] = useState({ ...article.socials });
   const cat = CATEGORIES.find(c => c.id === article.catId);
+
+  const handleSave = () => {
+    onEdit({ ...article, title: editTitle, content: editContent, socials: editSocials });
+    setEditing(false);
+  };
+
+  const currentText = section === "article" ? editContent : (editSocials?.[section] || "");
+  const setCurrentText = (val) => {
+    if (section === "article") setEditContent(val);
+    else setEditSocials(p => ({ ...p, [section]: val }));
+  };
 
   return (
     <div style={s.detail}>
+      {/* Header */}
       <div style={{ display: "flex", gap: 12, alignItems: "flex-start", marginBottom: 16 }}>
         <span style={{ fontSize: 28 }}>{cat?.icon}</span>
-        <div>
-          <div style={{ color: cat?.color, fontSize: 11, textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ color: cat?.color, fontSize: 11, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>
             {cat?.label} · {article.clientName}
           </div>
-          <div style={{ color: "#fff", fontSize: 17, fontWeight: 700, lineHeight: 1.4 }}>{article.title}</div>
+          {editing ? (
+            <input
+              style={{ ...s.input, fontSize: 15, fontWeight: 700, color: "#fff" }}
+              value={editTitle}
+              onChange={e => setEditTitle(e.target.value)}
+            />
+          ) : (
+            <div style={{ color: "#fff", fontSize: 17, fontWeight: 700, lineHeight: 1.4 }}>{editTitle}</div>
+          )}
         </div>
+        {article.status === STATUS.PENDING && (
+          <button
+            style={{ ...s.subTab, borderColor: editing ? "#E8B84B" : "#2a2a2a", color: editing ? "#E8B84B" : "#555", flexShrink: 0 }}
+            onClick={() => editing ? handleSave() : setEditing(true)}
+          >
+            {editing ? "💾 Salva" : "✏️ Modifica"}
+          </button>
+        )}
       </div>
 
       {/* Sub tabs */}
@@ -725,15 +758,31 @@ function ArticleDetail({ article, onApprove, onReject, wpConfigured }) {
         ))}
       </div>
 
-      <div style={s.contentBox}>
-        <p style={{ color: "#ccc", lineHeight: 1.75, fontSize: 14, whiteSpace: "pre-wrap", margin: 0 }}>
-          {section === "article" ? article.content : (article.socials?.[section] || "—")}
-        </p>
-      </div>
+      {/* Content — read or edit */}
+      {editing ? (
+        <textarea
+          style={{ ...s.input, minHeight: 320, lineHeight: 1.75, fontSize: 13, resize: "vertical", fontFamily: "inherit" }}
+          value={currentText}
+          onChange={e => setCurrentText(e.target.value)}
+        />
+      ) : (
+        <div style={s.contentBox}>
+          <p style={{ color: "#ccc", lineHeight: 1.75, fontSize: 14, whiteSpace: "pre-wrap", margin: 0 }}>
+            {section === "article" ? editContent : (editSocials?.[section] || "—")}
+          </p>
+        </div>
+      )}
 
-      {article.status === STATUS.PENDING && (
+      {editing && (
+        <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+          <button style={s.approveBtn} onClick={handleSave}>💾 Salva modifiche</button>
+          <button style={s.rejectBtn} onClick={() => { setEditing(false); setEditTitle(article.title); setEditContent(article.content); setEditSocials({ ...article.socials }); }}>Annulla</button>
+        </div>
+      )}
+
+      {!editing && article.status === STATUS.PENDING && (
         <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
-          <button style={s.approveBtn} onClick={onApprove}>
+          <button style={s.approveBtn} onClick={() => onApprove({ ...article, title: editTitle, content: editContent, socials: editSocials })}>
             ✅ Approva{wpConfigured ? " e Pubblica su WP" : ""}
           </button>
           <button style={s.rejectBtn} onClick={onReject}>✗ Rifiuta</button>
@@ -868,4 +917,3 @@ const CSS = `
   ::-webkit-scrollbar-thumb { background: #222; border-radius: 4px; }
   button:hover { filter: brightness(1.15); }
 `;
-
