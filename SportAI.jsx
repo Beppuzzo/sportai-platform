@@ -875,16 +875,13 @@ Rispondi SOLO con il testo del post, niente altro.`;
                 setWpSaved(true);
                 addLog("💾 Configurazione WordPress salvata", "success");
                 try {
-                  await sbQuery("/settings?id=eq.1", {
-                    method: "PATCH",
-                    prefer: "return=minimal",
-                    body: JSON.stringify({ wp_url: wpConfig.url, wp_user: wpConfig.user, wp_password: wpConfig.password, schedule }),
-                  }).catch(async () => {
-                    await sbQuery("/settings", {
-                      method: "POST",
-                      body: JSON.stringify({ id: 1, wp_url: wpConfig.url, wp_user: wpConfig.user, wp_password: wpConfig.password, schedule }),
-                    });
+                  // Upsert — insert or update in one call
+                  const result = await sbQuery("/settings", {
+                    method: "POST",
+                    prefer: "resolution=merge-duplicates,return=representation",
+                    body: JSON.stringify({ id: 1, wp_url: wpConfig.url, wp_user: wpConfig.user, wp_password: wpConfig.password, schedule }),
                   });
+                  console.log("Settings saved:", result);
                 } catch(e) { console.error("Save settings error:", e); }
               }}
               >
