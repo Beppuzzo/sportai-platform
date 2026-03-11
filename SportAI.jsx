@@ -246,11 +246,10 @@ REGOLE FORMATO:
           normative: "sport association",
         };
         const keyword = catKeywords[catId] || "sport italy";
-        const unsplashKey = "GthMipPPgDXBhWaAOZYCET7XRIKMvbhyMeZdtgDrCQs";
-        const imgRes = await fetch(`https://api.unsplash.com/photos/random?query=${encodeURIComponent(keyword)}&orientation=landscape&w=1280&h=720&client_id=${unsplashKey}`);
+        const imgRes = await fetch(`/api/unsplash?query=${encodeURIComponent(keyword)}`);
         if (imgRes.ok) {
           const imgData = await imgRes.json();
-          const imageUrl = imgData.urls?.regular;
+          const imageUrl = imgData.url;
           if (imageUrl) {
             const creds = btoa(`${wpConfig.user}:${wpConfig.password}`);
             const imgBlob = await (await fetch(imageUrl)).blob();
