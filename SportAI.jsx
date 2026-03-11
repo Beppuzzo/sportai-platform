@@ -325,30 +325,27 @@ REGOLE FORMATO:
         ]);
         const imageOptions = [img1?.url, img2?.url, img3?.url].filter(Boolean);
         const imageUrl = imageOptions[0]; // default first, user can change in review
-          if (imageUrl) {
-            // Upload via server-side proxy to avoid CORS and binary issues
-            const currentWp = wpConfigRef.current;
-            const proxyRes = await fetch("/api/upload-media", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                imageUrl,
-                wpUrl: currentWp.url,
-                wpUser: currentWp.user,
-                wpPassword: currentWp.password,
-              }),
-            });
-            if (proxyRes.ok) {
-              const proxyData = await proxyRes.json();
-              featuredImageId = proxyData.id;
-              addLog("✅ Immagine di copertina caricata", "success");
-            } else {
-              const errData = await proxyRes.json().catch(() => ({}));
-              addLog("⚠️ Upload immagine fallito: " + (errData.error || proxyRes.status), "info");
-            }
+        if (imageUrl) {
+          // Upload via server-side proxy to avoid CORS and binary issues
+          const currentWp = wpConfigRef.current;
+          const proxyRes = await fetch("/api/upload-media", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              imageUrl,
+              wpUrl: currentWp.url,
+              wpUser: currentWp.user,
+              wpPassword: currentWp.password,
+            }),
+          });
+          if (proxyRes.ok) {
+            const proxyData = await proxyRes.json();
+            featuredImageId = proxyData.id;
+            addLog("✅ Immagine di copertina caricata", "success");
+          } else {
+            const errData = await proxyRes.json().catch(() => ({}));
+            addLog("⚠️ Upload immagine fallito: " + (errData.error || proxyRes.status), "info");
           }
-        } else {
-          addLog("⚠️ Unsplash non disponibile: " + imgRes.status, "info");
         }
       } catch(e) {
         addLog("⚠️ Immagine copertina errore: " + e.message, "info");
