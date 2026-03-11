@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 
 // ─── SUPABASE ─────────────────────────────────────────────────────────────────
 const SUPABASE_URL = "https://fyfqboqctjhoprhppjkf.supabase.co";
-const SUPABASE_KEY = "sb_publishable_cTL4Po_qXF3iuRbioDzyIQ_TWN0y_l2";
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ5ZnFib3FjdGpob3ByaHBwamtmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMyMzQ2NTgsImV4cCI6MjA4ODgxMDY1OH0.Zwv6e1qy51t3rKnQzsVwFqJDYZ-Jj_fvsr4zDBVi-2o";
 
 async function sbQuery(path, options = {}) {
   const res = await fetch(`${SUPABASE_URL}/rest/v1${path}`, {
@@ -102,6 +102,7 @@ export default function SportAI() {
   const [log, setLog] = useState([]);
   const [schedule, setSchedule] = useState("manual");
   const [wpConfig, setWpConfig] = useState({ url: "", user: "", password: "" });
+  const wpConfigRef = useRef({ url: "", user: "", password: "" });
   const [wpSaved, setWpSaved] = useState(false);
   const [showClientModal, setShowClientModal] = useState(false);
   const [activeClientId, setActiveClientId] = useState(null);
@@ -118,7 +119,8 @@ export default function SportAI() {
     async function loadData() {
       try {
         // Load settings
-        const settings = await sbQuery("/settings?select=*").catch(() => []);
+        const settings = await sbQuery("/settings?select=*").catch((e) => { console.error("Settings load failed:", e); return []; });
+        console.log("Settings loaded:", settings);
         if (settings.length > 0) {
           const s = settings[0];
           if (s.wp_url) setWpConfig({ url: s.wp_url, user: s.wp_user, password: s.wp_password });
@@ -146,6 +148,9 @@ export default function SportAI() {
     }
     loadData();
   }, []);
+
+  // Keep wpConfigRef in sync so generateArticle always has latest credentials
+  useEffect(() => { wpConfigRef.current = wpConfig; }, [wpConfig]);
 
   const addLog = useCallback((msg, type = "info") => {
     const ts = new Date().toLocaleTimeString("it-IT");
@@ -310,14 +315,15 @@ REGOLE FORMATO:
           const imageUrl = imgData.url;
           if (imageUrl) {
             // Upload via server-side proxy to avoid CORS and binary issues
+            const currentWp = wpConfigRef.current;
             const proxyRes = await fetch("/api/upload-media", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 imageUrl,
-                wpUrl: wpConfig.url,
-                wpUser: wpConfig.user,
-                wpPassword: wpConfig.password,
+                wpUrl: currentWp.url,
+                wpUser: currentWp.user,
+                wpPassword: currentWp.password,
               }),
             });
             if (proxyRes.ok) {
