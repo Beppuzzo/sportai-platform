@@ -55,7 +55,7 @@ async function callClaude(messages, system) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       model: "claude-sonnet-4-20250514",
-      max_tokens: 1000,
+      max_tokens: 2500,
       system,
       messages,
       tools: [{ type: "web_search_20250305", name: "web_search" }],
@@ -117,7 +117,51 @@ export default function SportAI() {
 
     const cat = CATEGORIES.find(c => c.id === catId);
     const client = forTarget !== "mysite" ? clients.find(c => c.id === Number(forTarget)) : null;
-    const topicFinal = topic.trim() || `aggiornamenti ${cat.label} per lo sport dilettantistico italiano 2025`;
+    const topicVariants = {
+      comunicazione: [
+        "come usare i social media per promuovere una ASD nel 2025",
+        "strategie di email marketing per società sportive dilettantistiche",
+        "come creare un sito web efficace per una ASD",
+        "personal branding per atleti dilettanti italiani",
+        "come comunicare gli sponsor sui canali social sportivi",
+        "video marketing per associazioni sportive: guida pratica",
+      ],
+      regolamento: [
+        "novità regolamentari CONI 2025 per le ASD",
+        "riforma dello sport: cosa cambia per le associazioni dilettantistiche",
+        "come affiliarsi a una federazione sportiva in Italia",
+        "regole antidoping per società sportive dilettantistiche",
+        "tutela dei minori nello sport: obblighi per le ASD",
+        "statuto ASD: cosa deve contenere secondo la legge italiana",
+      ],
+      news: [
+        "novità dal mondo dello sport dilettantistico italiano questa settimana",
+        "aggiornamenti dalle federazioni sportive nazionali",
+        "eventi sportivi dilettantistici in programma in Italia",
+        "risultati e classifiche dello sport dilettantistico italiano",
+        "nuovi bandi e finanziamenti per le ASD italiane",
+        "interviste con dirigenti di società sportive dilettantistiche",
+      ],
+      fiscalita: [
+        "detrazioni fiscali per le spese sportive dei figli nel 2025",
+        "regime fiscale agevolato per ASD: guida completa 2025",
+        "come gestire i rimborsi spese agli atleti dilettanti",
+        "IVA e associazioni sportive dilettantistiche: cosa sapere",
+        "donazioni alle ASD: come funziona la deducibilità fiscale",
+        "contributi previdenziali per collaboratori sportivi nel 2025",
+      ],
+      normative: [
+        "adempimenti annuali obbligatori per le ASD nel 2025",
+        "privacy e GDPR nelle associazioni sportive: guida pratica",
+        "sicurezza sui luoghi di allenamento: obblighi di legge",
+        "certificato medico sportivo: novità normative 2025",
+        "assicurazione obbligatoria per ASD: cosa coprire",
+        "registro nazionale delle attività sportive dilettantistiche: come iscriversi",
+      ],
+    };
+    const variants = topicVariants[catId] || [];
+    const randomTopic = variants[Math.floor(Math.random() * variants.length)] || "";
+    const topicFinal = topic.trim() || randomTopic || `aggiornamenti ${cat.label} per lo sport dilettantistico italiano 2025`;
     const id = newId();
 
     addLog(`${auto ? "⏱ AUTO" : "🚀 MANUALE"} | Categoria: ${cat.label}${client ? ` | Cliente: ${client.name}` : " | Il tuo sito"}`, "info");
@@ -135,10 +179,21 @@ export default function SportAI() {
       addLog("🔍 Ricerca fonti autorevoli online...", "info");
       const articleSystem = `Sei un giornalista sportivo esperto in sport dilettantistico italiano.
 Cerca informazioni aggiornate da fonti autorevoli (CONI, FIGC, Gazzetta dello Sport, Ministero dello Sport, Agenzia delle Entrate).
-Scrivi un articolo originale di 350-500 parole. NON copiare testi: comprendi e rielabora con parole tue.
+Scrivi un articolo originale e COMPLETO di 450-600 parole. NON troncare mai il testo. Completa sempre l'ultimo paragrafo.
+NON copiare testi: comprendi e rielabora con parole tue.
 ${client ? `L'articolo è per la società sportiva: ${client.name} (${client.sport}).` : "L'articolo è per un blog di settore rivolto a operatori sportivi dilettantistici."}
-Struttura risposta: prima riga = TITOLO (senza prefissi), poi corpo articolo.
-Tono: professionale ma accessibile. Cita fonti genericamente ("secondo il CONI", "come prevede la normativa").`;
+
+FORMATO OUTPUT (rispetta esattamente):
+- Prima riga: solo il TITOLO in testo semplice (niente HTML, niente prefissi)
+- Corpo articolo in HTML con questa struttura:
+  <h2>Sottotitolo sezione</h2>
+  <p>Paragrafo testo...</p>
+  <h2>Altro sottotitolo</h2>
+  <p>Altro paragrafo...</p>
+- Usa <strong> per grassetto, <em> per corsivo
+- Minimo 3 sezioni con h2
+- Termina SEMPRE con un paragrafo conclusivo completo
+- Tono: professionale ma accessibile. Cita fonti genericamente ("secondo il CONI", "come prevede la normativa").`;
 
       const articleData = await callClaude(
         [{ role: "user", content: `Scrivi un articolo su: ${topicFinal}. Categoria: ${cat.label}.` }],
@@ -777,16 +832,62 @@ function ArticleDetail({ article, onApprove, onReject, onEdit, wpConfigured }) {
 
       {/* Content — read or edit */}
       {editing ? (
-        <textarea
-          style={{ ...s.input, minHeight: 320, lineHeight: 1.75, fontSize: 13, resize: "vertical", fontFamily: "inherit" }}
-          value={currentText}
-          onChange={e => setCurrentText(e.target.value)}
-        />
+        <div>
+          {section === "article" && (
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+              {[
+                { label: "H1", tag: "h1" },
+                { label: "H2", tag: "h2" },
+                { label: "P",  tag: "p"  },
+              ].map(({ label, tag }) => (
+                <button key={tag} style={s.tbBtn} onClick={() => {
+                  const sel = window.getSelection();
+                  if (sel && sel.toString()) {
+                    setCurrentText(currentText.replace(sel.toString(), `<${tag}>${sel.toString()}</${tag}>`));
+                  } else {
+                    setCurrentText(currentText + `\n<${tag}></${tag}>`);
+                  }
+                }}>{label}</button>
+              ))}
+              <div style={{ width: 1, background: "#2a2a2a", margin: "0 4px" }} />
+              {[
+                { label: "B",  open: "<strong>", close: "</strong>", style: { fontWeight: 900 } },
+                { label: "I",  open: "<em>",     close: "</em>",     style: { fontStyle: "italic" } },
+                { label: "U",  open: "<u>",      close: "</u>",      style: { textDecoration: "underline" } },
+              ].map(({ label, open, close, style: st }) => (
+                <button key={label} style={{ ...s.tbBtn, ...st }} onClick={() => {
+                  const sel = window.getSelection();
+                  const selected = sel?.toString();
+                  if (selected) {
+                    setCurrentText(currentText.replace(selected, `${open}${selected}${close}`));
+                  }
+                }}>{label}</button>
+              ))}
+              <div style={{ width: 1, background: "#2a2a2a", margin: "0 4px" }} />
+              <button style={{ ...s.tbBtn, fontSize: 10 }} onClick={() => setCurrentText(currentText.replace(/<[^>]+>/g, ""))}>Rimuovi HTML</button>
+              <button style={{ ...s.tbBtn, fontSize: 10, color: "#5B8FA8" }} onClick={() => {
+                const preview = document.getElementById("html-preview");
+                if (preview) preview.style.display = preview.style.display === "none" ? "block" : "none";
+              }}>👁 Anteprima</button>
+            </div>
+          )}
+          <textarea
+            style={{ ...s.input, minHeight: 320, lineHeight: 1.75, fontSize: 13, resize: "vertical", fontFamily: "'Courier New', monospace" }}
+            value={currentText}
+            onChange={e => setCurrentText(e.target.value)}
+          />
+          {section === "article" && (
+            <div id="html-preview" style={{ display: "none", background: "#0A0A0A", border: "1px solid #2a2a2a", borderRadius: 8, padding: 20, marginTop: 8, color: "#ccc", fontSize: 14, lineHeight: 1.75 }}
+              dangerouslySetInnerHTML={{ __html: currentText }}
+            />
+          )}
+        </div>
       ) : (
         <div style={s.contentBox}>
-          <p style={{ color: "#ccc", lineHeight: 1.75, fontSize: 14, whiteSpace: "pre-wrap", margin: 0 }}>
-            {section === "article" ? editContent : (editSocials?.[section] || "—")}
-          </p>
+          {section === "article"
+            ? <div style={{ color: "#ccc", lineHeight: 1.75, fontSize: 14 }} dangerouslySetInnerHTML={{ __html: editContent }} />
+            : <p style={{ color: "#ccc", lineHeight: 1.75, fontSize: 14, whiteSpace: "pre-wrap", margin: 0 }}>{editSocials?.[section] || "—"}</p>
+          }
         </div>
       )}
 
@@ -924,6 +1025,7 @@ const s = {
   modalOverlay: { position: "fixed", inset: 0, background: "#000000cc", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 },
   modal:       { background: "#0F0F0F", border: "1px solid #2a2a2a", borderRadius: 16, padding: 32, width: 480, maxWidth: "90vw" },
   empty:       { color: "#2a2a2a", textAlign: "center", padding: "40px 0", fontSize: 14 },
+  tbBtn:       { padding: "5px 10px", background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: 6, color: "#aaa", cursor: "pointer", fontSize: 12, fontFamily: "inherit" },
 };
 
 const CSS = `
