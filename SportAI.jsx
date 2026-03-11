@@ -179,21 +179,37 @@ export default function SportAI() {
       addLog("🔍 Ricerca fonti autorevoli online...", "info");
       const articleSystem = `Sei un giornalista sportivo esperto in sport dilettantistico italiano.
 Cerca informazioni aggiornate da fonti autorevoli (CONI, FIGC, Gazzetta dello Sport, Ministero dello Sport, Agenzia delle Entrate).
-Scrivi un articolo originale e COMPLETO di 450-600 parole. NON troncare mai il testo. Completa sempre l'ultimo paragrafo.
-NON copiare testi: comprendi e rielabora con parole tue.
-${client ? `L'articolo è per la società sportiva: ${client.name} (${client.sport}).` : "L'articolo è per un blog di settore rivolto a operatori sportivi dilettantistici."}
 
-FORMATO OUTPUT (rispetta esattamente):
-- Prima riga: solo il TITOLO in testo semplice (niente HTML, niente prefissi)
-- Corpo articolo in HTML con questa struttura:
-  <h2>Sottotitolo sezione</h2>
-  <p>Paragrafo testo...</p>
-  <h2>Altro sottotitolo</h2>
-  <p>Altro paragrafo...</p>
-- Usa <strong> per grassetto, <em> per corsivo
-- Minimo 3 sezioni con h2
-- Termina SEMPRE con un paragrafo conclusivo completo
-- Tono: professionale ma accessibile. Cita fonti genericamente ("secondo il CONI", "come prevede la normativa").`;
+REGOLE FONDAMENTALI:
+1. Scrivi un articolo COMPLETO di esattamente 5 sezioni. Non fermarti prima.
+2. NON troncare MAI il testo. Ogni sezione deve essere completa.
+3. L'ultima sezione deve essere una conclusione che riassume e chiude in modo organico.
+4. NON copiare testi: comprendi e rielabora con parole tue.
+${client ? "5. L'articolo è per la società sportiva: " + client.name + " (" + client.sport + ")." : "5. L'articolo è per un blog rivolto a operatori sportivi dilettantistici italiani."}
+
+FORMATO OUTPUT OBBLIGATORIO - rispetta ESATTAMENTE questa struttura:
+TITOLO DELL'ARTICOLO
+
+<h2>Primo sottotitolo</h2>
+<p>Primo paragrafo di almeno 80 parole...</p>
+
+<h2>Secondo sottotitolo</h2>
+<p>Secondo paragrafo di almeno 80 parole...</p>
+
+<h2>Terzo sottotitolo</h2>
+<p>Terzo paragrafo di almeno 80 parole...</p>
+
+<h2>Quarto sottotitolo</h2>
+<p>Quarto paragrafo di almeno 80 parole...</p>
+
+<h2>Conclusione</h2>
+<p>Paragrafo conclusivo che riassume i punti chiave e chiude in modo organico...</p>
+
+REGOLE FORMATO:
+- Prima riga: SOLO il titolo, testo semplice, senza asterischi, senza #, senza HTML
+- Usa <strong> per evidenziare concetti chiave
+- Tono professionale ma accessibile
+- Cita fonti genericamente ("secondo il CONI", "come prevede la normativa")`;
 
       const articleData = await callClaude(
         [{ role: "user", content: `Scrivi un articolo su: ${topicFinal}. Categoria: ${cat.label}.` }],
@@ -201,9 +217,59 @@ FORMATO OUTPUT (rispetta esattamente):
       );
       const text = extractText(articleData);
       const lines = text.split("\n").filter(l => l.trim());
-      const title = lines[0] || `Articolo: ${topicFinal}`;
-      const content = lines.slice(1).join("\n").trim();
+      const rawTitle = lines[0] || `Articolo: ${topicFinal}`;
+      const title = rawTitle
+        .replace(/[*#_`~]/g, "")
+        .replace(/^(Titolo:|TITOLO:|Title:)/i, "")
+        .replace(/<[^>]+>/g, "")
+        .trim();
+      const rawContent = lines.slice(1).join("\n").trim();
+      // Ensure content is properly HTML formatted
+      const content = rawContent.includes("<h2>") || rawContent.includes("<p>")
+        ? rawContent
+        : rawContent.split("\n\n").map((para, i) =>
+            i === 0 ? `<p>${para}</p>` :
+            para.startsWith("**") ? `<h2>${para.replace(/\*\*/g, "")}</h2>` :
+            `<p>${para}</p>`
+          ).join("\n");
       addLog(`✅ Articolo generato: "${title.slice(0, 55)}..."`, "success");
+
+      // Featured image via Unsplash
+      let featuredImageId = null;
+      try {
+        addLog("🖼 Ricerca immagine di copertina...", "info");
+        const catKeywords = {
+          comunicazione: "sport marketing digital",
+          regolamento: "sport law regulation",
+          news: "sport italy news",
+          fiscalita: "finance business sport",
+          normative: "sport association meeting",
+        };
+        const keyword = catKeywords[catId] || "sport italy";
+        // Use Unsplash Source — free, no API key needed, 1280x720 = 16:9 HD
+        const imageUrl = `https://source.unsplash.com/1280x720/?${encodeURIComponent(keyword)}`;
+        const creds = btoa(`${wpConfig.user}:${wpConfig.password}`);
+        const imgRes = await fetch(imageUrl);
+        if (imgRes.ok) {
+          const imgBlob = await imgRes.blob();
+          const formData = new FormData();
+          formData.append("file", new File([imgBlob], "copertina.jpg", { type: "image/jpeg" }));
+          const mediaRes = await fetch(`${wpConfig.url}/wp-json/wp/v2/media`, {
+            method: "POST",
+            headers: { "Authorization": `Basic ${creds}`, "Content-Disposition": "attachment; filename=\"copertina.jpg\"" },
+            body: formData,
+          });
+          if (mediaRes.ok) {
+            const mediaData = await mediaRes.json();
+            featuredImageId = mediaData.id;
+            addLog("✅ Immagine di copertina caricata (16:9 HD)", "success");
+          } else {
+            addLog("⚠️ Upload immagine fallito: " + mediaRes.status, "info");
+          }
+        }
+      } catch(e) {
+        addLog("⚠️ Immagine copertina non disponibile", "info");
+      }
 
       // Social posts
       const socialResults = {};
@@ -225,7 +291,7 @@ Rispondi SOLO con il testo del post, niente altro.`;
       }
 
       setArticles(prev => prev.map(a =>
-        a.id === id ? { ...a, title, content, socials: socialResults, status: STATUS.PENDING } : a
+        a.id === id ? { ...a, title, content, socials: socialResults, featuredImageId, status: STATUS.PENDING } : a
       ));
       addLog(`📋 Articolo #${id} in attesa della tua approvazione`, "highlight");
     } catch (err) {
@@ -254,7 +320,7 @@ Rispondi SOLO con il testo del post, niente altro.`;
         },
         body: JSON.stringify({
           title: article.title,
-          content: article.content.replace(/\n/g, "<br>"),
+          content: article.content,
           status: "publish",
           categories: ({
             comunicazione: [14, 11],
@@ -264,7 +330,8 @@ Rispondi SOLO con il testo del post, niente altro.`;
             normative:     [13, 11],
           }[article.catId] || [11]),
           tags: [],
-          excerpt: article.content.slice(0, 160),
+          excerpt: article.content.replace(/<[^>]+>/g, "").slice(0, 160),
+          featured_media: article.featuredImageId || 0,
         }),
       });
       if (res.ok) {
@@ -687,10 +754,10 @@ Rispondi SOLO con il testo del post, niente altro.`;
                 Inserisci le credenziali del tuo WordPress. Vai su <strong style={{ color: "#E8B84B" }}>Utenti → Il tuo profilo → Password applicazione</strong> per generare una password sicura.
               </p>
               {[
-                { key: "url",      label: "URL WordPress",        placeholder: "https://tuosito.it" },
-                { key: "user",     label: "Nome utente",          placeholder: "admin" },
-                { key: "password", label: "Password applicazione", placeholder: "xxxx xxxx xxxx xxxx" },
-              ].map(field => (
+                { key: "url",         label: "URL WordPress",        placeholder: "https://tuosito.it" },
+                { key: "user",        label: "Nome utente",          placeholder: "admin" },
+                { key: "password",    label: "Password applicazione", placeholder: "xxxx xxxx xxxx xxxx" },
+                    ].map(field => (
                 <div key={field.key} style={s.fieldGroup}>
                   <label style={s.label}>{field.label}</label>
                   <input
