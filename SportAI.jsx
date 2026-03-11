@@ -52,13 +52,14 @@ const PLANS = [
   { id: "full", label: "Full",  price: "€499", articles: 99, color: "#C9956C" },
 ];
 
-const STATUS = { GENERATING: "generating", PENDING: "pending", APPROVED: "approved", REJECTED: "rejected" };
+const STATUS = { GENERATING: "generating", PENDING: "pending", APPROVED: "approved", REJECTED: "rejected", DISCARDED: "discarded" };
 
 const STATUS_META = {
   generating: { label: "Generazione...", color: "#E8B84B" },
-  pending:    { label: "In attesa",      color: "#5B8FA8" },
-  approved:   { label: "Approvato ✓",    color: "#A8C5A0" },
-  rejected:   { label: "Rifiutato",      color: "#C97B6C" },
+  pending:    { label: "Da approvare",   color: "#5B8FA8" },
+  approved:   { label: "Pubblicato ✓",   color: "#A8C5A0" },
+  rejected:   { label: "Scartato",       color: "#C97B6C" },
+  discarded:  { label: "Scartato",       color: "#C97B6C" },
 };
 
 // ─── FAKE CLIENTS (demo) ──────────────────────────────────────────────────────
@@ -490,21 +491,23 @@ Rispondi SOLO con il testo del post, niente altro.`;
   }, [publishToWordPress]);
 
   const rejectArticle = useCallback((article) => {
-    setArticles(prev => prev.map(a => a.id === article.id ? { ...a, status: STATUS.REJECTED } : a));
+    setArticles(prev => prev.map(a => a.id === article.id ? { ...a, status: STATUS.DISCARDED } : a));
     setSelectedArticle(null);
-    addLog(`✗ Articolo #${article.id} rifiutato`, "error");
+    setTab("review");
+    addLog(`🗑 Articolo "${article.title?.slice(0,40)}..." spostato in Scartati`, "info");
     try {
-      if (article.db_id) {
-        sbQuery(`/articles?id=eq.${article.db_id}`, { method: "PATCH", prefer: "return=minimal", body: JSON.stringify({ status: STATUS.REJECTED }) });
-      }
+      const dbId = article.db_id || article.id;
+      sbQuery(`/articles?id=eq.${dbId}`, { method: "PATCH", prefer: "return=minimal", body: JSON.stringify({ status: STATUS.DISCARDED }) }).catch(()=>{});
     } catch(e) {}
   }, []);
 
   // ── Stats ─────────────────────────────────────────────────────────────────
-  const pending   = articles.filter(a => a.status === STATUS.PENDING).length;
-  const approved  = articles.filter(a => a.status === STATUS.APPROVED).length;
-  const total     = articles.length;
-  const activeClients = clients.filter(c => c.active).length;
+  const totalGenerated = articles.filter(a => a.status !== STATUS.GENERATING).length;
+  const pending        = articles.filter(a => a.status === STATUS.PENDING).length;
+  const approved       = articles.filter(a => a.status === STATUS.APPROVED).length;
+  const discarded      = articles.filter(a => a.status === STATUS.REJECTED || a.status === STATUS.DISCARDED).length;
+  const total          = articles.length;
+  const activeClients  = clients.filter(c => c.active).length;
 
   // ─── RENDER ───────────────────────────────────────────────────────────────
   return (
@@ -523,13 +526,14 @@ Rispondi SOLO con il testo del post, niente altro.`;
 
         <nav style={s.nav}>
           {[
-            { id: "dashboard", icon: "◈", label: "Dashboard" },
-            { id: "generate",  icon: "✦", label: "Genera" },
-            { id: "review",    icon: "◉", label: `Revisione${pending > 0 ? ` (${pending})` : ""}` },
-            { id: "clients",   icon: "◎", label: "Clienti" },
-            { id: "archive",   icon: "▦", label: "Archivio" },
-            { id: "settings",  icon: "◌", label: "Impostazioni" },
-            { id: "log",       icon: "▤", label: "Log" },
+            { id: "dashboard",  icon: "◈", label: "Dashboard" },
+            { id: "generate",   icon: "✦", label: "Genera" },
+            { id: "review",     icon: "◉", label: `Da Approvare`, badge: pending },
+            { id: "archive",    icon: "✓", label: "Pubblicati" },
+            { id: "discarded",  icon: "✗", label: "Scartati", badge: discarded },
+            { id: "clients",    icon: "◎", label: "Clienti" },
+            { id: "settings",   icon: "◌", label: "Impostazioni" },
+            { id: "log",        icon: "▤", label: "Log" },
           ].map(item => (
             <button
               key={item.id}
@@ -538,7 +542,7 @@ Rispondi SOLO con il testo del post, niente altro.`;
             >
               <span style={s.navIcon}>{item.icon}</span>
               <span>{item.label}</span>
-              {item.id === "review" && pending > 0 && <span style={s.badge}>{pending}</span>}
+              {item.badge > 0 && <span style={{ ...s.badge, background: item.id === "discarded" ? "#C97B6C" : "#E8B84B" }}>{item.badge}</span>}
             </button>
           ))}
         </nav>
@@ -561,12 +565,12 @@ Rispondi SOLO con il testo del post, niente altro.`;
 
             <div style={s.statsGrid}>
               {[
-                { label: "Articoli totali",    value: total,         color: "#E8B84B" },
-                { label: "In attesa",          value: pending,       color: "#5B8FA8" },
-                { label: "Approvati",          value: approved,      color: "#A8C5A0" },
-                { label: "Clienti attivi",     value: activeClients, color: "#C9956C" },
+                { label: "Articoli Generati",   value: totalGenerated, color: "#E8B84B", tab: null },
+                { label: "Da Approvare",         value: pending,        color: "#5B8FA8", tab: "review" },
+                { label: "Pubblicati",           value: approved,       color: "#A8C5A0", tab: "archive" },
+                { label: "Scartati",             value: discarded,      color: "#C97B6C", tab: "discarded" },
               ].map(stat => (
-                <div key={stat.label} style={s.statCard}>
+                <div key={stat.label} style={{ ...s.statCard, cursor: stat.tab ? "pointer" : "default" }} onClick={() => stat.tab && setTab(stat.tab)}>
                   <div style={{ ...s.statValue, color: stat.color }}>{stat.value}</div>
                   <div style={s.statLabel}>{stat.label}</div>
                 </div>
@@ -733,8 +737,8 @@ Rispondi SOLO con il testo del post, niente altro.`;
             <div style={{ overflowY: "auto" }}>
               <h1 style={s.pageTitle}>Revisione</h1>
               <p style={s.pageSub}>Approva o rifiuta ogni contenuto</p>
-              {articles.filter(a => a.status === STATUS.PENDING).length === 0 && (
-                <div style={s.empty}>Nessun articolo da revisionare</div>
+              {pending === 0 && (
+                <div style={s.empty}>Nessun articolo da approvare</div>
               )}
               {articles.filter(a => a.status === STATUS.PENDING).map(a => (
                 <div
@@ -836,13 +840,13 @@ Rispondi SOLO con il testo del post, niente altro.`;
         {/* ── ARCHIVE ── */}
         {tab === "archive" && (
           <div style={s.page}>
-            <h1 style={s.pageTitle}>Archivio</h1>
-            <p style={s.pageSub}>Tutti gli articoli generati ({total} totali)</p>
+            <h1 style={s.pageTitle}>Pubblicati</h1>
+            <p style={s.pageSub}>Articoli approvati e pubblicati su WordPress ({approved} totali)</p>
 
-            {articles.length === 0 && <div style={s.empty}>Nessun articolo ancora generato</div>}
+            {approved === 0 && <div style={s.empty}>Nessun articolo pubblicato ancora</div>}
 
             <div style={s.archiveGrid}>
-              {articles.map(a => (
+              {articles.filter(a => a.status === STATUS.APPROVED).map(a => (
                 <div
                   key={a.id}
                   style={s.archiveCard}
@@ -868,6 +872,40 @@ Rispondi SOLO con il testo del post, niente altro.`;
                   {a.status === STATUS.APPROVED && a.publishedToWP && (
                     <div style={{ marginTop: 10, fontSize: 10, color: "#A8C5A0", textAlign: "center" }}>✓ Pubblicato su WordPress</div>
                   )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ── SCARTATI ── */}
+        {tab === "discarded" && (
+          <div style={s.page}>
+            <h1 style={s.pageTitle}>Scartati</h1>
+            <p style={s.pageSub}>Articoli non conformi — usati per migliorare l'AI ({discarded} totali)</p>
+
+            {discarded === 0 && <div style={s.empty}>Nessun articolo scartato</div>}
+
+            <div style={s.archiveGrid}>
+              {articles.filter(a => a.status === STATUS.REJECTED || a.status === STATUS.DISCARDED).map(a => (
+                <div key={a.id} style={{ ...s.archiveCard, borderColor: "#C97B6C30" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
+                    <span style={{ fontSize: 20 }}>{CATEGORIES.find(c=>c.id===a.catId)?.icon}</span>
+                    <span style={{ color: "#C97B6C", fontSize: 11, fontWeight: 700 }}>Scartato</span>
+                  </div>
+                  <div style={s.archiveTitle}>{a.title?.slice(0, 70)}{a.title?.length > 70 ? "..." : ""}</div>
+                  <div style={s.archiveMeta}>{a.clientName}</div>
+                  <div style={s.archiveDate}>{a.createdAt?.toLocaleDateString("it-IT")}</div>
+                  <button
+                    style={{ ...s.miniBtn, marginTop: 10, width: "100%", textAlign: "center", color: "#5B8FA8", borderColor: "#5B8FA840" }}
+                    onClick={() => {
+                      setArticles(prev => prev.map(x => x.id === a.id ? { ...x, status: STATUS.PENDING } : x));
+                      sbQuery(`/articles?id=eq.${a.db_id || a.id}`, { method: "PATCH", prefer: "return=minimal", body: JSON.stringify({ status: STATUS.PENDING }) }).catch(()=>{});
+                      addLog(`↩ Articolo "${a.title?.slice(0,40)}..." ripristinato in Da Approvare`, "info");
+                    }}
+                  >
+                    ↩ Ripristina in Da Approvare
+                  </button>
                 </div>
               ))}
             </div>
@@ -1001,21 +1039,24 @@ function ArticleDetail({ article, onApprove, onReject, onEdit, wpConfigured }) {
     else setEditSocials(p => ({ ...p, [section]: val }));
   };
 
+  // All social formats — show placeholder if missing
+  const allSocials = SOCIAL_FORMATS.map(sf => ({
+    id: sf.id, label: sf.label, icon: sf.icon, color: sf.color,
+    hasContent: !!(editSocials?.[sf.id]),
+  }));
+
   return (
     <div style={s.detail}>
-      {/* Header */}
-      <div style={{ display: "flex", gap: 12, alignItems: "flex-start", marginBottom: 16 }}>
+
+      {/* ── HEADER con titolo e stato ── */}
+      <div style={{ display: "flex", gap: 12, alignItems: "flex-start", marginBottom: 20 }}>
         <span style={{ fontSize: 28 }}>{cat?.icon}</span>
         <div style={{ flex: 1 }}>
           <div style={{ color: cat?.color, fontSize: 11, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>
             {cat?.label} · {article.clientName}
           </div>
           {editing ? (
-            <input
-              style={{ ...s.input, fontSize: 15, fontWeight: 700, color: "#fff" }}
-              value={editTitle}
-              onChange={e => setEditTitle(e.target.value)}
-            />
+            <input style={{ ...s.input, fontSize: 15, fontWeight: 700, color: "#fff" }} value={editTitle} onChange={e => setEditTitle(e.target.value)} />
           ) : (
             <div style={{ color: "#fff", fontSize: 17, fontWeight: 700, lineHeight: 1.4 }}>{editTitle}</div>
           )}
@@ -1024,129 +1065,109 @@ function ArticleDetail({ article, onApprove, onReject, onEdit, wpConfigured }) {
           <button
             style={{ ...s.subTab, borderColor: editing ? "#E8B84B" : "#2a2a2a", color: editing ? "#E8B84B" : "#555", flexShrink: 0 }}
             onClick={() => editing ? handleSave() : setEditing(true)}
-          >
-            {editing ? "💾 Salva" : "✏️ Modifica"}
-          </button>
+          >{editing ? "💾 Salva" : "✏️ Modifica"}</button>
         )}
       </div>
 
-      {/* Sub tabs */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
-        {[
-          { id: "article", label: "📄 Articolo" },
-          ...SOCIAL_FORMATS.filter(sf => article.socials?.[sf.id]).map(sf => ({ id: sf.id, label: `${sf.icon} ${sf.label}` }))
-        ].map(t => (
-          <button
-            key={t.id}
-            style={{ ...s.subTab, ...(section === t.id ? s.subTabActive : {}) }}
-            onClick={() => setSection(t.id)}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Content — read or edit */}
-      {editing ? (
-        <div>
-          {section === "article" && (
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
-              {[
-                { label: "H1", tag: "h1" },
-                { label: "H2", tag: "h2" },
-                { label: "P",  tag: "p"  },
-              ].map(({ label, tag }) => (
-                <button key={tag} style={s.tbBtn} onClick={() => {
-                  const sel = window.getSelection();
-                  if (sel && sel.toString()) {
-                    setCurrentText(currentText.replace(sel.toString(), `<${tag}>${sel.toString()}</${tag}>`));
-                  } else {
-                    setCurrentText(currentText + `\n<${tag}></${tag}>`);
-                  }
-                }}>{label}</button>
-              ))}
-              <div style={{ width: 1, background: "#2a2a2a", margin: "0 4px" }} />
-              {[
-                { label: "B",  open: "<strong>", close: "</strong>", style: { fontWeight: 900 } },
-                { label: "I",  open: "<em>",     close: "</em>",     style: { fontStyle: "italic" } },
-                { label: "U",  open: "<u>",      close: "</u>",      style: { textDecoration: "underline" } },
-              ].map(({ label, open, close, style: st }) => (
-                <button key={label} style={{ ...s.tbBtn, ...st }} onClick={() => {
-                  const sel = window.getSelection();
-                  const selected = sel?.toString();
-                  if (selected) {
-                    setCurrentText(currentText.replace(selected, `${open}${selected}${close}`));
-                  }
-                }}>{label}</button>
-              ))}
-              <div style={{ width: 1, background: "#2a2a2a", margin: "0 4px" }} />
-              <button style={{ ...s.tbBtn, fontSize: 10 }} onClick={() => setCurrentText(currentText.replace(/<[^>]+>/g, ""))}>Rimuovi HTML</button>
-              <button style={{ ...s.tbBtn, fontSize: 10, color: "#5B8FA8" }} onClick={() => {
-                const preview = document.getElementById("html-preview");
-                if (preview) preview.style.display = preview.style.display === "none" ? "block" : "none";
-              }}>👁 Anteprima</button>
-            </div>
-          )}
-          <textarea
-            style={{ ...s.input, minHeight: 320, lineHeight: 1.75, fontSize: 13, resize: "vertical", fontFamily: "'Courier New', monospace" }}
-            value={currentText}
-            onChange={e => setCurrentText(e.target.value)}
-          />
-          {section === "article" && (
-            <div id="html-preview" style={{ display: "none", background: "#0A0A0A", border: "1px solid #2a2a2a", borderRadius: 8, padding: 20, marginTop: 8, color: "#ccc", fontSize: 14, lineHeight: 1.75 }}
-              dangerouslySetInnerHTML={{ __html: currentText }}
-            />
-          )}
-        </div>
-      ) : (
-        <div style={s.contentBox}>
-          {section === "article"
-            ? <div style={{ color: "#ccc", lineHeight: 1.75, fontSize: 14 }} dangerouslySetInnerHTML={{ __html: editContent }} />
-            : <p style={{ color: "#ccc", lineHeight: 1.75, fontSize: 14, whiteSpace: "pre-wrap", margin: 0 }}>{editSocials?.[section] || "—"}</p>
-          }
-        </div>
-      )}
-
-      {editing && (
-        <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
-          <button style={s.approveBtn} onClick={handleSave}>💾 Salva modifiche</button>
-          <button style={s.rejectBtn} onClick={() => { setEditing(false); setEditTitle(article.title); setEditContent(article.content); setEditSocials({ ...article.socials }); }}>Annulla</button>
-        </div>
-      )}
-
-      {!editing && article.status === STATUS.PENDING && article.imageOptions?.length > 0 && (
-        <div style={{ marginTop: 16 }}>
-          <div style={{ fontSize: 11, color: "#555", textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 10 }}>🖼 Scegli immagine di copertina</div>
+      {/* ── COPERTINA — sempre visibile in cima ── */}
+      {(article.imageOptions?.length > 0) && (
+        <div style={{ marginBottom: 20 }}>
+          <div style={{ fontSize: 11, color: "#E8B84B", textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 10, fontWeight: 700 }}>
+            🖼 Copertina — clicca per scegliere
+          </div>
           <div style={{ display: "flex", gap: 10 }}>
             {article.imageOptions.map((url, i) => url && (
-              <div
-                key={i}
-                onClick={() => setSelectedImageUrl(url)}
+              <div key={i} onClick={() => article.status === STATUS.PENDING && setSelectedImageUrl(url)}
                 style={{
-                  flex: 1, height: 80, borderRadius: 8, overflow: "hidden", cursor: "pointer",
-                  border: selectedImageUrl === url ? "2px solid #E8B84B" : "2px solid transparent",
-                  opacity: selectedImageUrl === url ? 1 : 0.6,
-                  transition: "all 0.15s",
-                }}
-              >
-                <img src={url} style={{ width: "100%", height: "100%", objectFit: "cover" }} alt={`Opzione ${i+1}`} />
+                  flex: 1, height: 110, borderRadius: 10, overflow: "hidden",
+                  cursor: article.status === STATUS.PENDING ? "pointer" : "default",
+                  border: selectedImageUrl === url ? "3px solid #E8B84B" : "3px solid #1a1a1a",
+                  transition: "all 0.15s", position: "relative",
+                }}>
+                <img src={url} style={{ width: "100%", height: "100%", objectFit: "cover" }} alt={`Copertina ${i+1}`} />
+                {selectedImageUrl === url && (
+                  <div style={{ position: "absolute", bottom: 4, right: 6, background: "#E8B84B", color: "#000", fontSize: 9, fontWeight: 900, padding: "2px 6px", borderRadius: 4 }}>✓ SCELTA</div>
+                )}
               </div>
             ))}
           </div>
         </div>
       )}
 
+      {/* ── TAB: Articolo + Social ── */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+        <button key="article" style={{ ...s.subTab, ...(section === "article" ? s.subTabActive : {}) }} onClick={() => setSection("article")}>
+          📄 Articolo
+        </button>
+        {allSocials.map(sf => (
+          <button key={sf.id}
+            style={{ ...s.subTab, ...(section === sf.id ? s.subTabActive : {}), opacity: sf.hasContent ? 1 : 0.4 }}
+            onClick={() => setSection(sf.id)}>
+            {sf.icon} {sf.label}{!sf.hasContent ? " ⚠️" : ""}
+          </button>
+        ))}
+      </div>
+
+      {/* ── CONTENUTO ── */}
+      {editing ? (
+        <div>
+          {section === "article" && (
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+              {[{ label: "H1", tag: "h1" }, { label: "H2", tag: "h2" }, { label: "P", tag: "p" }].map(({ label, tag }) => (
+                <button key={tag} style={s.tbBtn} onClick={() => setCurrentText(currentText + `\n<${tag}></${tag}>`)}>{label}</button>
+              ))}
+              <div style={{ width: 1, background: "#2a2a2a", margin: "0 4px" }} />
+              {[
+                { label: "B", open: "<strong>", close: "</strong>", style: { fontWeight: 900 } },
+                { label: "I", open: "<em>", close: "</em>", style: { fontStyle: "italic" } },
+                { label: "U", open: "<u>", close: "</u>", style: { textDecoration: "underline" } },
+              ].map(({ label, open, close, style: st }) => (
+                <button key={label} style={{ ...s.tbBtn, ...st }} onClick={() => {
+                  const sel = window.getSelection()?.toString();
+                  if (sel) setCurrentText(currentText.replace(sel, `${open}${sel}${close}`));
+                }}>{label}</button>
+              ))}
+              <div style={{ width: 1, background: "#2a2a2a", margin: "0 4px" }} />
+              <button style={{ ...s.tbBtn, fontSize: 10 }} onClick={() => setCurrentText(currentText.replace(/<[^>]+>/g, ""))}>Rimuovi HTML</button>
+            </div>
+          )}
+          <textarea
+            style={{ ...s.input, minHeight: 280, lineHeight: 1.75, fontSize: 13, resize: "vertical", fontFamily: "'Courier New', monospace" }}
+            value={currentText}
+            onChange={e => setCurrentText(e.target.value)}
+          />
+          {section === "article" && (
+            <div style={{ background: "#0A0A0A", border: "1px solid #2a2a2a", borderRadius: 8, padding: 20, marginTop: 8, color: "#ccc", fontSize: 14, lineHeight: 1.75 }}
+              dangerouslySetInnerHTML={{ __html: currentText }} />
+          )}
+          <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+            <button style={s.approveBtn} onClick={handleSave}>💾 Salva modifiche</button>
+            <button style={s.rejectBtn} onClick={() => { setEditing(false); setEditTitle(article.title); setEditContent(article.content); setEditSocials({ ...article.socials }); }}>Annulla</button>
+          </div>
+        </div>
+      ) : (
+        <div style={{ ...s.contentBox, maxHeight: 340 }}>
+          {section === "article"
+            ? <div style={{ color: "#ccc", lineHeight: 1.85, fontSize: 14 }} dangerouslySetInnerHTML={{ __html: editContent }} />
+            : editSocials?.[section]
+              ? <p style={{ color: "#ccc", lineHeight: 1.75, fontSize: 14, whiteSpace: "pre-wrap", margin: 0 }}>{editSocials[section]}</p>
+              : <div style={{ color: "#333", fontStyle: "italic", padding: 20 }}>Bozza social non generata per questo articolo. Clicca ✏️ Modifica per aggiungerla manualmente.</div>
+          }
+        </div>
+      )}
+
+      {/* ── AZIONI ── */}
       {!editing && article.status === STATUS.PENDING && (
-        <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
+        <div style={{ display: "flex", gap: 12, marginTop: 20 }}>
           <button style={s.approveBtn} onClick={() => onApprove({ ...article, title: editTitle, content: editContent, socials: editSocials, selectedImageUrl })}>
             ✅ Approva{wpConfigured ? " e Pubblica su WP" : ""}
           </button>
-          <button style={s.rejectBtn} onClick={onReject}>✗ Rifiuta</button>
+          <button style={s.rejectBtn} onClick={onReject}>🗑 Scarta</button>
         </div>
       )}
       {article.status !== STATUS.PENDING && (
-        <div style={{ marginTop: 16, padding: "10px 16px", borderRadius: 8, background: "#111", color: STATUS_META[article.status].color, fontSize: 13 }}>
-          {STATUS_META[article.status].label}{article.publishedToWP ? " · Pubblicato su WordPress" : ""}
+        <div style={{ marginTop: 16, padding: "10px 16px", borderRadius: 8, background: "#111", color: STATUS_META[article.status]?.color || "#555", fontSize: 13 }}>
+          {STATUS_META[article.status]?.label}{article.publishedToWP ? " · Pubblicato su WordPress ✓" : ""}
         </div>
       )}
     </div>
