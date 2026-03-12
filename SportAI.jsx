@@ -143,6 +143,7 @@ export default function SportAI() {
             forTarget: a.for_target || "mysite",
             featuredImageId: a.featured_image_id,
             publishedToWP: a.published_to_wp,
+            imageOptions: Array.isArray(a.image_options) ? a.image_options : (a.image_options ? JSON.parse(a.image_options) : []),
             socials: typeof a.socials === "string" ? JSON.parse(a.socials) : (a.socials || {}),
             createdAt: new Date(a.created_at),
           })));
@@ -379,6 +380,7 @@ Rispondi SOLO con il testo del post. Nessun titolo, nessuna spiegazione aggiunti
             content,
             socials: socialResults,
             featured_image_id: featuredImageId,
+            image_options: imageOptions || [],
             status: STATUS.PENDING,
             for_target: forTarget,
             client_name: client?.name || "Il tuo sito",
