@@ -1088,9 +1088,9 @@ function ArticleDetail({ article, onApprove, onReject, onEdit, wpConfigured }) {
     const kw = catKeywords[article.catId] || "sports athletes action";
     try {
       const results = await Promise.allSettled([
-        fetch(\`/api/unsplash?query=\${encodeURIComponent(kw)}\`).then(r => r.ok ? r.json() : null),
-        fetch(\`/api/unsplash?query=\${encodeURIComponent(kw)}\`).then(r => r.ok ? r.json() : null),
-        fetch(\`/api/unsplash?query=\${encodeURIComponent(kw)}\`).then(r => r.ok ? r.json() : null),
+        fetch(`/api/unsplash?query=${encodeURIComponent(kw)}`).then(r => r.ok ? r.json() : null),
+        fetch(`/api/unsplash?query=${encodeURIComponent(kw)}`).then(r => r.ok ? r.json() : null),
+        fetch(`/api/unsplash?query=${encodeURIComponent(kw)}`).then(r => r.ok ? r.json() : null),
       ]);
       const urls = results.filter(r => r.status === "fulfilled" && r.value?.url).map(r => r.value.url);
       if (urls.length > 0) {
@@ -1112,10 +1112,10 @@ function ArticleDetail({ article, onApprove, onReject, onEdit, wpConfigured }) {
       facebook: "Tono informativo e diretto, max 800 caratteri, aggiungi 3-5 hashtag in fondo.",
       linkedin: "Tono professionale per dirigenti sportivi, max 600 caratteri, hashtag professionali.",
     };
-    const system = \`Sei un social media manager sportivo italiano esperto.
-Crea UN post per \${sf.label} in italiano.
-\${platformInstructions[sfId] || ""}
-Rispondi SOLO con il testo del post. Nessun titolo, nessuna spiegazione.\`;
+    const system = `Sei un social media manager sportivo italiano esperto.
+Crea UN post per ${sf.label} in italiano.
+${platformInstructions[sfId] || ""}
+Rispondi SOLO con il testo del post. Nessun titolo, nessuna spiegazione.`;
     try {
       const res = await fetch("/api/claude", {
         method: "POST",
@@ -1124,7 +1124,7 @@ Rispondi SOLO con il testo del post. Nessun titolo, nessuna spiegazione.\`;
           model: "claude-sonnet-4-20250514",
           max_tokens: 1000,
           system,
-          messages: [{ role: "user", content: \`Titolo: \${editTitle}\nContenuto: \${plainText}\` }],
+          messages: [{ role: "user", content: `Titolo: ${editTitle}\nContenuto: ${plainText}` }],
         }),
       });
       const data = await res.json();
@@ -1196,7 +1196,7 @@ Rispondi SOLO con il testo del post. Nessun titolo, nessuna spiegazione.\`;
             {isPending && (
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
                 {[{ label: "H2", tag: "h2" }, { label: "P", tag: "p" }].map(({ label, tag }) => (
-                  <button key={tag} style={s.tbBtn} onClick={() => setCurrentText(currentText + \`\n<\${tag}></\${tag}>\`)}>{label}</button>
+                  <button key={tag} style={s.tbBtn} onClick={() => setCurrentText(currentText + `\n<${tag}></${tag}>`)}>{label}</button>
                 ))}
                 <div style={{ width: 1, background: "#2a2a2a", margin: "0 4px" }} />
                 {[
@@ -1205,7 +1205,7 @@ Rispondi SOLO con il testo del post. Nessun titolo, nessuna spiegazione.\`;
                 ].map(({ label, open, close, style: st }) => (
                   <button key={label} style={{ ...s.tbBtn, ...st }} onClick={() => {
                     const sel = window.getSelection()?.toString();
-                    if (sel) setCurrentText(editContent.replace(sel, \`\${open}\${sel}\${close}\`));
+                    if (sel) setCurrentText(editContent.replace(sel, `${open}${sel}${close}`));
                   }}>{label}</button>
                 ))}
                 <div style={{ width: 1, background: "#2a2a2a", margin: "0 4px" }} />
@@ -1297,7 +1297,7 @@ Rispondi SOLO con il testo del post. Nessun titolo, nessuna spiegazione.\`;
             {isPending ? (
               <textarea
                 style={{ ...s.input, minHeight: 200, lineHeight: 1.75, fontSize: 14, resize: "vertical" }}
-                placeholder={editSocials?.[sf.id] ? "" : \`Clicca "Genera post" per creare la bozza \${sf.label}, oppure scrivi qui manualmente...\`}
+                placeholder={editSocials?.[sf.id] ? "" : `Clicca "Genera post" per creare la bozza ${sf.label}, oppure scrivi qui manualmente...`}
                 value={editSocials?.[sf.id] || ""}
                 onChange={e => { setEditSocials(p => ({ ...p, [sf.id]: e.target.value })); setDirty(true); }}
               />
