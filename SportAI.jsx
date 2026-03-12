@@ -1050,6 +1050,7 @@ function ArticleDetail({ article, onApprove, onReject, onEdit, wpConfigured }) {
   const [loadingImages, setLoadingImages] = useState(false);
   const [generatingSocial, setGeneratingSocial] = useState(null); // id platform
   const [dirty, setDirty]               = useState(false);
+  const [imagePrompt, setImagePrompt]   = useState("");
   const cat = CATEGORIES.find(c => c.id === article.catId);
 
   // Sync when article changes (different article selected)
@@ -1076,7 +1077,7 @@ function ArticleDetail({ article, onApprove, onReject, onEdit, wpConfigured }) {
   };
 
   // Fetch new cover images from Unsplash
-  const fetchImages = async () => {
+  const fetchImages = async (customQuery) => {
     setLoadingImages(true);
     const catKeywords = {
       comunicazione: "sports team social media marketing",
@@ -1085,12 +1086,14 @@ function ArticleDetail({ article, onApprove, onReject, onEdit, wpConfigured }) {
       fiscalita: "sports business professionals",
       normative: "sports club organization",
     };
-    const kw = catKeywords[article.catId] || "sports athletes action";
+    const kw = (typeof customQuery === "string" && customQuery.trim())
+      ? customQuery.trim()
+      : (catKeywords[article.catId] || "sports athletes action");
     try {
       const results = await Promise.allSettled([
-        fetch(`/api/unsplash?query=${encodeURIComponent(kw)}`).then(r => r.ok ? r.json() : null),
-        fetch(`/api/unsplash?query=${encodeURIComponent(kw)}`).then(r => r.ok ? r.json() : null),
-        fetch(`/api/unsplash?query=${encodeURIComponent(kw)}`).then(r => r.ok ? r.json() : null),
+        fetch(`/api/unsplash?query=${encodeURIComponent(kw)}&page=1`).then(r => r.ok ? r.json() : null),
+        fetch(`/api/unsplash?query=${encodeURIComponent(kw)}&page=2`).then(r => r.ok ? r.json() : null),
+        fetch(`/api/unsplash?query=${encodeURIComponent(kw)}&page=3`).then(r => r.ok ? r.json() : null),
       ]);
       const urls = results.filter(r => r.status === "fulfilled" && r.value?.url).map(r => r.value.url);
       if (urls.length > 0) {
@@ -1194,26 +1197,72 @@ Rispondi SOLO con il testo del post. Nessun titolo, nessuna spiegazione.`;
         {section === "article" && (
           <div>
             {isPending && (
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
-                {[{ label: "H2", tag: "h2" }, { label: "P", tag: "p" }].map(({ label, tag }) => (
-                  <button key={tag} style={s.tbBtn} onClick={() => setCurrentText(currentText + `\n<${tag}></${tag}>`)}>{label}</button>
-                ))}
-                <div style={{ width: 1, background: "#2a2a2a", margin: "0 4px" }} />
-                {[
-                  { label: "B", open: "<strong>", close: "</strong>", style: { fontWeight: 900 } },
-                  { label: "I", open: "<em>", close: "</em>", style: { fontStyle: "italic" } },
-                ].map(({ label, open, close, style: st }) => (
-                  <button key={label} style={{ ...s.tbBtn, ...st }} onClick={() => {
-                    const sel = window.getSelection()?.toString();
-                    if (sel) setCurrentText(editContent.replace(sel, `${open}${sel}${close}`));
-                  }}>{label}</button>
-                ))}
-                <div style={{ width: 1, background: "#2a2a2a", margin: "0 4px" }} />
-                <button style={{ ...s.tbBtn, fontSize: 10 }} onClick={() => setCurrentText(currentText.replace(/<[^>]+>/g, ""))}>Rimuovi HTML</button>
+              <div style={{ background: "#0d0d0d", border: "1px solid #1e1e1e", borderRadius: 8, padding: "8px 10px", marginBottom: 10 }}>
+                {/* Riga 1: Blocchi di testo */}
+                <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 6, paddingBottom: 6, borderBottom: "1px solid #1e1e1e" }}>
+                  <span style={{ fontSize: 10, color: "#333", alignSelf: "center", marginRight: 4, textTransform: "uppercase", letterSpacing: 1 }}>Struttura</span>
+                  {[
+                    { label: "Titolo",      tag: "h1", style: { fontWeight: 900, fontSize: 11 } },
+                    { label: "Sottotitolo", tag: "h2", style: { fontWeight: 700, fontSize: 11 } },
+                    { label: "Paragrafo",   tag: "p",  style: { fontSize: 11 } },
+                  ].map(({ label, tag, style: st }) => (
+                    <button key={tag} style={{ ...s.tbBtn, ...st }} onClick={() => {
+                      const ta = document.getElementById("article-textarea");
+                      const start = ta?.selectionStart ?? editContent.length;
+                      const end   = ta?.selectionEnd   ?? editContent.length;
+                      const sel   = editContent.slice(start, end);
+                      const replacement = sel ? `<${tag}>${sel}</${tag}>` : `<${tag}></${tag}>`;
+                      setCurrentText(editContent.slice(0, start) + replacement + editContent.slice(end));
+                    }}>{label}</button>
+                  ))}
+                </div>
+                {/* Riga 2: Formattazione inline */}
+                <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 6, paddingBottom: 6, borderBottom: "1px solid #1e1e1e" }}>
+                  <span style={{ fontSize: 10, color: "#333", alignSelf: "center", marginRight: 4, textTransform: "uppercase", letterSpacing: 1 }}>Stile</span>
+                  {[
+                    { label: "G",  title: "Grassetto",  open: "<strong>", close: "</strong>", style: { fontWeight: 900 } },
+                    { label: "C",  title: "Corsivo",    open: "<em>",     close: "</em>",     style: { fontStyle: "italic" } },
+                    { label: "S",  title: "Sottolineato", open: "<u>",   close: "</u>",       style: { textDecoration: "underline" } },
+                    { label: "~~", title: "Barrato",    open: "<s>",      close: "</s>",       style: { textDecoration: "line-through" } },
+                    { label: "E",  title: "Evidenziato", open: '<mark style="background:#E8B84B;color:#000;padding:0 3px">', close: "</mark>", style: { background: "#E8B84B", color: "#000", borderRadius: 3 } },
+                  ].map(({ label, title, open, close, style: st }) => (
+                    <button key={label} title={title} style={{ ...s.tbBtn, ...st, minWidth: 30, textAlign: "center" }} onClick={() => {
+                      const ta = document.getElementById("article-textarea");
+                      const start = ta?.selectionStart ?? 0;
+                      const end   = ta?.selectionEnd   ?? 0;
+                      const sel   = editContent.slice(start, end);
+                      if (sel) setCurrentText(editContent.slice(0, start) + open + sel + close + editContent.slice(end));
+                    }}>{label}</button>
+                  ))}
+                </div>
+                {/* Riga 3: Allineamento */}
+                <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 10, color: "#333", alignSelf: "center", marginRight: 4, textTransform: "uppercase", letterSpacing: 1 }}>Allinea</span>
+                  {[
+                    { label: "⬛◻◻", title: "Sinistra",    align: "left" },
+                    { label: "◻⬛◻", title: "Centro",      align: "center" },
+                    { label: "◻◻⬛", title: "Destra",      align: "right" },
+                    { label: "▬▬▬", title: "Giustificato", align: "justify" },
+                  ].map(({ label, title, align }) => (
+                    <button key={align} title={title} style={{ ...s.tbBtn, fontSize: 11 }} onClick={() => {
+                      const ta = document.getElementById("article-textarea");
+                      const start = ta?.selectionStart ?? 0;
+                      const end   = ta?.selectionEnd   ?? 0;
+                      const sel   = editContent.slice(start, end);
+                      if (sel) {
+                        const wrapped = `<div style="text-align:${align}">${sel}</div>`;
+                        setCurrentText(editContent.slice(0, start) + wrapped + editContent.slice(end));
+                      }
+                    }}>{title}</button>
+                  ))}
+                  <div style={{ flex: 1 }} />
+                  <button style={{ ...s.tbBtn, fontSize: 10, color: "#C97B6C", borderColor: "#C97B6C30" }} onClick={() => setCurrentText(currentText.replace(/<[^>]+>/g, ""))}>✕ Rimuovi HTML</button>
+                </div>
               </div>
             )}
             {isPending ? (
               <textarea
+                id="article-textarea"
                 style={{ ...s.input, minHeight: 420, lineHeight: 1.75, fontSize: 13, resize: "vertical", fontFamily: "'Courier New', monospace" }}
                 value={editContent}
                 onChange={e => { setEditContent(e.target.value); setDirty(true); }}
@@ -1231,50 +1280,75 @@ Rispondi SOLO con il testo del post. Nessun titolo, nessuna spiegazione.`;
         {/* COPERTINA */}
         {section === "cover" && (
           <div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-              <div style={{ color: "#888", fontSize: 13 }}>
-                {imageOptions.length > 0 ? "Clicca un'immagine per selezionarla come copertina" : "Nessuna immagine disponibile — cercane di nuove"}
+            {/* Campo ricerca personalizzata */}
+            {isPending && (
+              <div style={{ marginBottom: 20, background: "#0d0d0d", border: "1px solid #1e1e1e", borderRadius: 10, padding: 16 }}>
+                <div style={{ fontSize: 11, color: "#E8B84B", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8, fontWeight: 700 }}>
+                  🔍 Descrivi la copertina che vuoi
+                </div>
+                <div style={{ color: "#555", fontSize: 12, marginBottom: 10 }}>
+                  Es: "atleti che esultano in campo", "stadio di calcio vista aerea", "palestra con ragazzi che si allenano"
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input
+                    style={{ ...s.input, flex: 1, padding: "8px 12px", fontSize: 13 }}
+                    placeholder={`Copertina per: "${editTitle.slice(0, 40)}..."`}
+                    value={imagePrompt}
+                    onChange={e => setImagePrompt(e.target.value)}
+                    onKeyDown={e => e.key === "Enter" && fetchImages(imagePrompt)}
+                  />
+                  <button
+                    style={{ ...s.approveBtn, padding: "8px 16px", fontSize: 13, opacity: loadingImages ? 0.5 : 1 }}
+                    onClick={() => fetchImages(imagePrompt)}
+                    disabled={loadingImages}>
+                    {loadingImages ? "⏳" : "Cerca"}
+                  </button>
+                </div>
+                <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+                  {["sport action", "team celebration", "stadium crowd", "athlete training", "trophy award"].map(tag => (
+                    <button key={tag} style={{ ...s.tbBtn, fontSize: 11, color: "#5B8FA8", borderColor: "#5B8FA830" }}
+                      onClick={() => { setImagePrompt(tag); fetchImages(tag); }}>
+                      {tag}
+                    </button>
+                  ))}
+                </div>
               </div>
-              {isPending && (
-                <button
-                  style={{ ...s.miniBtn, color: "#E8B84B", borderColor: "#E8B84B40", opacity: loadingImages ? 0.5 : 1 }}
-                  onClick={fetchImages}
-                  disabled={loadingImages}>
-                  {loadingImages ? "⏳ Carico..." : "🔄 Cerca nuove immagini"}
-                </button>
-              )}
-            </div>
+            )}
 
+            {/* Griglia immagini */}
             {imageOptions.length === 0 ? (
               <div style={{ textAlign: "center", padding: 60, color: "#333", border: "1px dashed #222", borderRadius: 12 }}>
                 <div style={{ fontSize: 40, marginBottom: 12 }}>🖼</div>
-                <div style={{ marginBottom: 16, color: "#555" }}>Nessuna immagine disponibile per questo articolo</div>
-                {isPending && (
-                  <button style={{ ...s.approveBtn, fontSize: 13 }} onClick={fetchImages} disabled={loadingImages}>
-                    {loadingImages ? "⏳ Carico..." : "🔍 Cerca immagini su Unsplash"}
-                  </button>
-                )}
+                <div style={{ marginBottom: 16, color: "#555" }}>Nessuna immagine — scrivi una descrizione sopra e clicca Cerca</div>
               </div>
             ) : (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
-                {imageOptions.map((url, i) => (
-                  <div key={i}
-                    onClick={() => isPending && setSelectedImageUrl(url)}
-                    style={{
-                      borderRadius: 10, overflow: "hidden", position: "relative",
-                      border: selectedImageUrl === url ? "3px solid #E8B84B" : "3px solid #1a1a1a",
-                      cursor: isPending ? "pointer" : "default",
-                      transition: "border 0.15s",
-                      aspectRatio: "16/9",
-                    }}>
-                    <img src={url} style={{ width: "100%", height: "100%", objectFit: "cover" }} alt={""} />
-                    {selectedImageUrl === url && (
-                      <div style={{ position: "absolute", bottom: 8, right: 8, background: "#E8B84B", color: "#000", fontSize: 10, fontWeight: 900, padding: "3px 8px", borderRadius: 4 }}>
-                        ✓ SCELTA
+              <div>
+                <div style={{ color: "#555", fontSize: 12, marginBottom: 10 }}>
+                  Clicca un'immagine per selezionarla — quella con il bordo giallo verrà usata come copertina
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
+                  {imageOptions.map((url, i) => (
+                    <div key={i}
+                      onClick={() => isPending && setSelectedImageUrl(url)}
+                      style={{
+                        borderRadius: 10, overflow: "hidden", position: "relative",
+                        border: selectedImageUrl === url ? "3px solid #E8B84B" : "3px solid #1a1a1a",
+                        cursor: isPending ? "pointer" : "default",
+                        transition: "border 0.15s",
+                        aspectRatio: "16/9",
+                      }}>
+                      <img src={url} style={{ width: "100%", height: "100%", objectFit: "cover" }} alt={""} />
+                      {selectedImageUrl === url && (
+                        <div style={{ position: "absolute", bottom: 8, right: 8, background: "#E8B84B", color: "#000", fontSize: 10, fontWeight: 900, padding: "3px 8px", borderRadius: 4 }}>
+                          ✓ SCELTA
+                        </div>
+                      )}
+                      <div style={{ position: "absolute", top: 6, left: 8, background: "#00000080", color: "#fff", fontSize: 10, padding: "2px 6px", borderRadius: 3 }}>
+                        {i + 1}
                       </div>
-                    )}
-                  </div>
-                ))}
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </div>
