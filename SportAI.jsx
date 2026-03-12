@@ -732,11 +732,11 @@ Rispondi SOLO con il testo del post. Nessun titolo, nessuna spiegazione aggiunti
 
         {/* ── REVISIONE ── */}
         {tab === "review" && (
-          <div style={{ ...s.page, display: "grid", gridTemplateColumns: "320px 1fr", gap: 20, height: "100%" }}>
-            {/* List */}
-            <div style={{ overflowY: "auto" }}>
-              <h1 style={s.pageTitle}>Revisione</h1>
-              <p style={s.pageSub}>Approva o rifiuta ogni contenuto</p>
+          <div style={{ display: "grid", gridTemplateColumns: "300px 1fr", height: "100%", overflow: "hidden" }}>
+            {/* Lista articoli */}
+            <div style={{ overflowY: "auto", borderRight: "1px solid #1a1a1a", padding: "20px 16px" }}>
+              <div style={{ fontSize: 18, fontWeight: 900, color: "#fff", letterSpacing: -0.5, marginBottom: 4 }}>Da Approvare</div>
+              <div style={{ color: "#444", fontSize: 12, marginBottom: 16 }}>{pending} articoli in attesa</div>
               {pending === 0 && (
                 <div style={s.empty}>Nessun articolo da approvare</div>
               )}
@@ -746,6 +746,7 @@ Rispondi SOLO con il testo del post. Nessun titolo, nessuna spiegazione aggiunti
                   style={{
                     ...s.listCard,
                     borderColor: selectedArticle?.id === a.id ? "#E8B84B" : "#1e1e1e",
+                    background: selectedArticle?.id === a.id ? "#E8B84B08" : "transparent",
                   }}
                   onClick={() => setSelectedArticle(a)}
                 >
@@ -757,22 +758,42 @@ Rispondi SOLO con il testo del post. Nessun titolo, nessuna spiegazione aggiunti
                   </div>
                   <div style={s.listCardTitle}>{a.title}</div>
                   <div style={s.listCardMeta}>{a.clientName} · {a.createdAt?.toLocaleTimeString("it-IT")}</div>
+                  {/* mini preview social/cover status */}
+                  <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+                    {["instagram","facebook","linkedin"].map(sid => (
+                      <span key={sid} style={{ fontSize: 9, padding: "1px 5px", borderRadius: 3,
+                        background: a.socials?.[sid] ? "#A8C5A020" : "#33333350",
+                        color: a.socials?.[sid] ? "#A8C5A0" : "#444" }}>
+                        {sid === "instagram" ? "IG" : sid === "facebook" ? "FB" : "LI"}
+                      </span>
+                    ))}
+                    <span style={{ fontSize: 9, padding: "1px 5px", borderRadius: 3,
+                      background: (a.imageOptions?.length > 0) ? "#E8B84B20" : "#33333350",
+                      color: (a.imageOptions?.length > 0) ? "#E8B84B" : "#444" }}>
+                      🖼
+                    </span>
+                  </div>
                 </div>
               ))}
             </div>
 
-            {/* Detail */}
-            <div style={{ overflowY: "auto" }}>
-              {!selectedArticle
-                ? <div style={{ ...s.empty, marginTop: 80 }}>Seleziona un articolo dalla lista</div>
-                : <ArticleDetail
-                    article={selectedArticle}
-                    onApprove={(edited) => approveArticle(edited || selectedArticle)}
-                    onReject={() => rejectArticle(selectedArticle)}
-                    onEdit={(edited) => { setArticles(prev => prev.map(a => a.id === edited.id ? edited : a)); setSelectedArticle(edited); }}
-                    wpConfigured={!!(wpConfig.url && wpConfig.user && wpConfig.password)}
-                  />
-              }
+            {/* Dettaglio articolo */}
+            <div style={{ overflow: "hidden", display: "flex", flexDirection: "column" }}>
+              {!selectedArticle ? (
+                <div style={{ ...s.empty, marginTop: 100, textAlign: "center" }}>
+                  <div style={{ fontSize: 40, marginBottom: 12 }}>←</div>
+                  Seleziona un articolo dalla lista
+                </div>
+              ) : (
+                <ArticleDetail
+                  key={selectedArticle.id}
+                  article={selectedArticle}
+                  onApprove={(edited) => approveArticle(edited || selectedArticle)}
+                  onReject={() => rejectArticle(selectedArticle)}
+                  onEdit={(edited) => { setArticles(prev => prev.map(a => a.id === edited.id ? edited : a)); setSelectedArticle(edited); }}
+                  wpConfigured={!!(wpConfig.url && wpConfig.user && wpConfig.password)}
+                />
+              )}
             </div>
           </div>
         )}
@@ -1020,159 +1041,300 @@ Rispondi SOLO con il testo del post. Nessun titolo, nessuna spiegazione aggiunti
 
 // ─── ARTICLE DETAIL ───────────────────────────────────────────────────────────
 function ArticleDetail({ article, onApprove, onReject, onEdit, wpConfigured }) {
-  const [section, setSection] = useState("article");
-  const [editing, setEditing] = useState(false);
-  const [editTitle, setEditTitle] = useState(article.title);
-  const [editContent, setEditContent] = useState(article.content);
-  const [editSocials, setEditSocials] = useState({ ...article.socials });
+  const [section, setSection]           = useState("article");
+  const [editTitle, setEditTitle]       = useState(article.title);
+  const [editContent, setEditContent]   = useState(article.content);
+  const [editSocials, setEditSocials]   = useState({ ...(article.socials || {}) });
   const [selectedImageUrl, setSelectedImageUrl] = useState(article.imageOptions?.[0] || null);
+  const [imageOptions, setImageOptions] = useState(article.imageOptions || []);
+  const [loadingImages, setLoadingImages] = useState(false);
+  const [generatingSocial, setGeneratingSocial] = useState(null); // id platform
+  const [dirty, setDirty]               = useState(false);
   const cat = CATEGORIES.find(c => c.id === article.catId);
 
-  const handleSave = () => {
-    onEdit({ ...article, title: editTitle, content: editContent, socials: editSocials });
-    setEditing(false);
+  // Sync when article changes (different article selected)
+  useEffect(() => {
+    setEditTitle(article.title);
+    setEditContent(article.content);
+    setEditSocials({ ...(article.socials || {}) });
+    setImageOptions(article.imageOptions || []);
+    setSelectedImageUrl(article.imageOptions?.[0] || null);
+    setSection("article");
+    setDirty(false);
+  }, [article.id]);
+
+  const save = () => {
+    onEdit({ ...article, title: editTitle, content: editContent, socials: editSocials, imageOptions, selectedImageUrl });
+    setDirty(false);
   };
 
-  const currentText = section === "article" ? editContent : (editSocials?.[section] || "");
+  const currentText    = section === "article" ? editContent : (editSocials?.[section] || "");
   const setCurrentText = (val) => {
     if (section === "article") setEditContent(val);
     else setEditSocials(p => ({ ...p, [section]: val }));
+    setDirty(true);
   };
 
-  // All social formats — show placeholder if missing
-  const allSocials = SOCIAL_FORMATS.map(sf => ({
-    id: sf.id, label: sf.label, icon: sf.icon, color: sf.color,
-    hasContent: !!(editSocials?.[sf.id]),
-  }));
+  // Fetch new cover images from Unsplash
+  const fetchImages = async () => {
+    setLoadingImages(true);
+    const catKeywords = {
+      comunicazione: "sports team social media marketing",
+      regolamento: "sports stadium official",
+      news: "sports athletes competition",
+      fiscalita: "sports business professionals",
+      normative: "sports club organization",
+    };
+    const kw = catKeywords[article.catId] || "sports athletes action";
+    try {
+      const results = await Promise.allSettled([
+        fetch(\`/api/unsplash?query=\${encodeURIComponent(kw)}\`).then(r => r.ok ? r.json() : null),
+        fetch(\`/api/unsplash?query=\${encodeURIComponent(kw)}\`).then(r => r.ok ? r.json() : null),
+        fetch(\`/api/unsplash?query=\${encodeURIComponent(kw)}\`).then(r => r.ok ? r.json() : null),
+      ]);
+      const urls = results.filter(r => r.status === "fulfilled" && r.value?.url).map(r => r.value.url);
+      if (urls.length > 0) {
+        setImageOptions(urls);
+        setSelectedImageUrl(urls[0]);
+        onEdit({ ...article, title: editTitle, content: editContent, socials: editSocials, imageOptions: urls, selectedImageUrl: urls[0] });
+      }
+    } catch(e) {}
+    setLoadingImages(false);
+  };
+
+  // Generate social for a single platform
+  const generateSocial = async (sfId) => {
+    setGeneratingSocial(sfId);
+    const sf = SOCIAL_FORMATS.find(s => s.id === sfId);
+    const plainText = editContent.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 600);
+    const platformInstructions = {
+      instagram: "Usa emoji, tono coinvolgente, max 2000 caratteri, termina con call to action e 5-10 hashtag.",
+      facebook: "Tono informativo e diretto, max 800 caratteri, aggiungi 3-5 hashtag in fondo.",
+      linkedin: "Tono professionale per dirigenti sportivi, max 600 caratteri, hashtag professionali.",
+    };
+    const system = \`Sei un social media manager sportivo italiano esperto.
+Crea UN post per \${sf.label} in italiano.
+\${platformInstructions[sfId] || ""}
+Rispondi SOLO con il testo del post. Nessun titolo, nessuna spiegazione.\`;
+    try {
+      const res = await fetch("/api/claude", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 1000,
+          system,
+          messages: [{ role: "user", content: \`Titolo: \${editTitle}\nContenuto: \${plainText}\` }],
+        }),
+      });
+      const data = await res.json();
+      const text = data.content?.find(b => b.type === "text")?.text || "";
+      if (text) {
+        setEditSocials(p => ({ ...p, [sfId]: text }));
+        onEdit({ ...article, title: editTitle, content: editContent, socials: { ...editSocials, [sfId]: text }, imageOptions, selectedImageUrl });
+      }
+    } catch(e) {}
+    setGeneratingSocial(null);
+  };
+
+  const isPending = article.status === STATUS.PENDING;
 
   return (
-    <div style={s.detail}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", gap: 0 }}>
 
-      {/* ── HEADER con titolo e stato ── */}
-      <div style={{ display: "flex", gap: 12, alignItems: "flex-start", marginBottom: 20 }}>
-        <span style={{ fontSize: 28 }}>{cat?.icon}</span>
-        <div style={{ flex: 1 }}>
-          <div style={{ color: cat?.color, fontSize: 11, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>
-            {cat?.label} · {article.clientName}
+      {/* ── HEADER ── */}
+      <div style={{ padding: "16px 20px", borderBottom: "1px solid #1e1e1e", background: "#0d0d0d" }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+          <span style={{ fontSize: 24 }}>{cat?.icon}</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ color: cat?.color, fontSize: 10, textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>
+              {cat?.label} · {article.clientName}
+            </div>
+            {isPending ? (
+              <input
+                style={{ ...s.input, fontSize: 14, fontWeight: 700, color: "#fff", padding: "6px 10px" }}
+                value={editTitle}
+                onChange={e => { setEditTitle(e.target.value); setDirty(true); }}
+              />
+            ) : (
+              <div style={{ color: "#fff", fontSize: 15, fontWeight: 700, lineHeight: 1.4 }}>{editTitle}</div>
+            )}
           </div>
-          {editing ? (
-            <input style={{ ...s.input, fontSize: 15, fontWeight: 700, color: "#fff" }} value={editTitle} onChange={e => setEditTitle(e.target.value)} />
-          ) : (
-            <div style={{ color: "#fff", fontSize: 17, fontWeight: 700, lineHeight: 1.4 }}>{editTitle}</div>
+          {dirty && isPending && (
+            <button style={{ ...s.approveBtn, padding: "6px 14px", fontSize: 12 }} onClick={save}>💾 Salva</button>
           )}
         </div>
-        {article.status === STATUS.PENDING && (
+
+        {/* Tab nav */}
+        <div style={{ display: "flex", gap: 6, marginTop: 14, flexWrap: "wrap" }}>
           <button
-            style={{ ...s.subTab, borderColor: editing ? "#E8B84B" : "#2a2a2a", color: editing ? "#E8B84B" : "#555", flexShrink: 0 }}
-            onClick={() => editing ? handleSave() : setEditing(true)}
-          >{editing ? "💾 Salva" : "✏️ Modifica"}</button>
-        )}
+            style={{ ...s.subTab, ...(section === "article" ? s.subTabActive : {}) }}
+            onClick={() => setSection("article")}>
+            📄 Articolo
+          </button>
+          <button
+            style={{ ...s.subTab, ...(section === "cover" ? s.subTabActive : {}), borderColor: imageOptions.length > 0 ? "#E8B84B50" : "#2a2a2a" }}
+            onClick={() => setSection("cover")}>
+            🖼 Copertina{imageOptions.length > 0 ? ` (${imageOptions.length})` : " —"}
+          </button>
+          {SOCIAL_FORMATS.map(sf => (
+            <button key={sf.id}
+              style={{ ...s.subTab, ...(section === sf.id ? s.subTabActive : {}), borderColor: editSocials?.[sf.id] ? "#5B8FA850" : "#2a2a2a" }}
+              onClick={() => setSection(sf.id)}>
+              {sf.icon} {sf.label} {editSocials?.[sf.id] ? "✓" : "—"}
+            </button>
+          ))}
+        </div>
       </div>
 
-      {/* ── COPERTINA — sempre visibile in cima ── */}
-      {(article.imageOptions?.length > 0) && (
-        <div style={{ marginBottom: 20 }}>
-          <div style={{ fontSize: 11, color: "#E8B84B", textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 10, fontWeight: 700 }}>
-            🖼 Copertina — clicca per scegliere
+      {/* ── BODY ── */}
+      <div style={{ flex: 1, overflowY: "auto", padding: "20px" }}>
+
+        {/* ARTICOLO */}
+        {section === "article" && (
+          <div>
+            {isPending && (
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+                {[{ label: "H2", tag: "h2" }, { label: "P", tag: "p" }].map(({ label, tag }) => (
+                  <button key={tag} style={s.tbBtn} onClick={() => setCurrentText(currentText + \`\n<\${tag}></\${tag}>\`)}>{label}</button>
+                ))}
+                <div style={{ width: 1, background: "#2a2a2a", margin: "0 4px" }} />
+                {[
+                  { label: "B", open: "<strong>", close: "</strong>", style: { fontWeight: 900 } },
+                  { label: "I", open: "<em>", close: "</em>", style: { fontStyle: "italic" } },
+                ].map(({ label, open, close, style: st }) => (
+                  <button key={label} style={{ ...s.tbBtn, ...st }} onClick={() => {
+                    const sel = window.getSelection()?.toString();
+                    if (sel) setCurrentText(editContent.replace(sel, \`\${open}\${sel}\${close}\`));
+                  }}>{label}</button>
+                ))}
+                <div style={{ width: 1, background: "#2a2a2a", margin: "0 4px" }} />
+                <button style={{ ...s.tbBtn, fontSize: 10 }} onClick={() => setCurrentText(currentText.replace(/<[^>]+>/g, ""))}>Rimuovi HTML</button>
+              </div>
+            )}
+            {isPending ? (
+              <textarea
+                style={{ ...s.input, minHeight: 420, lineHeight: 1.75, fontSize: 13, resize: "vertical", fontFamily: "'Courier New', monospace" }}
+                value={editContent}
+                onChange={e => { setEditContent(e.target.value); setDirty(true); }}
+              />
+            ) : (
+              <div style={{ color: "#ccc", lineHeight: 1.85, fontSize: 14 }} dangerouslySetInnerHTML={{ __html: editContent }} />
+            )}
+            {isPending && (
+              <div style={{ background: "#0A0A0A", border: "1px solid #1a1a1a", borderRadius: 8, padding: 20, marginTop: 12, color: "#ccc", fontSize: 14, lineHeight: 1.85 }}
+                dangerouslySetInnerHTML={{ __html: editContent }} />
+            )}
           </div>
-          <div style={{ display: "flex", gap: 10 }}>
-            {article.imageOptions.map((url, i) => url && (
-              <div key={i} onClick={() => article.status === STATUS.PENDING && setSelectedImageUrl(url)}
-                style={{
-                  flex: 1, height: 110, borderRadius: 10, overflow: "hidden",
-                  cursor: article.status === STATUS.PENDING ? "pointer" : "default",
-                  border: selectedImageUrl === url ? "3px solid #E8B84B" : "3px solid #1a1a1a",
-                  transition: "all 0.15s", position: "relative",
-                }}>
-                <img src={url} style={{ width: "100%", height: "100%", objectFit: "cover" }} alt={`Copertina ${i+1}`} />
-                {selectedImageUrl === url && (
-                  <div style={{ position: "absolute", bottom: 4, right: 6, background: "#E8B84B", color: "#000", fontSize: 9, fontWeight: 900, padding: "2px 6px", borderRadius: 4 }}>✓ SCELTA</div>
+        )}
+
+        {/* COPERTINA */}
+        {section === "cover" && (
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <div style={{ color: "#888", fontSize: 13 }}>
+                {imageOptions.length > 0 ? "Clicca un'immagine per selezionarla come copertina" : "Nessuna immagine disponibile — cercane di nuove"}
+              </div>
+              {isPending && (
+                <button
+                  style={{ ...s.miniBtn, color: "#E8B84B", borderColor: "#E8B84B40", opacity: loadingImages ? 0.5 : 1 }}
+                  onClick={fetchImages}
+                  disabled={loadingImages}>
+                  {loadingImages ? "⏳ Carico..." : "🔄 Cerca nuove immagini"}
+                </button>
+              )}
+            </div>
+
+            {imageOptions.length === 0 ? (
+              <div style={{ textAlign: "center", padding: 60, color: "#333", border: "1px dashed #222", borderRadius: 12 }}>
+                <div style={{ fontSize: 40, marginBottom: 12 }}>🖼</div>
+                <div style={{ marginBottom: 16, color: "#555" }}>Nessuna immagine disponibile per questo articolo</div>
+                {isPending && (
+                  <button style={{ ...s.approveBtn, fontSize: 13 }} onClick={fetchImages} disabled={loadingImages}>
+                    {loadingImages ? "⏳ Carico..." : "🔍 Cerca immagini su Unsplash"}
+                  </button>
                 )}
               </div>
-            ))}
+            ) : (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
+                {imageOptions.map((url, i) => (
+                  <div key={i}
+                    onClick={() => isPending && setSelectedImageUrl(url)}
+                    style={{
+                      borderRadius: 10, overflow: "hidden", position: "relative",
+                      border: selectedImageUrl === url ? "3px solid #E8B84B" : "3px solid #1a1a1a",
+                      cursor: isPending ? "pointer" : "default",
+                      transition: "border 0.15s",
+                      aspectRatio: "16/9",
+                    }}>
+                    <img src={url} style={{ width: "100%", height: "100%", objectFit: "cover" }} alt={""} />
+                    {selectedImageUrl === url && (
+                      <div style={{ position: "absolute", bottom: 8, right: 8, background: "#E8B84B", color: "#000", fontSize: 10, fontWeight: 900, padding: "3px 8px", borderRadius: 4 }}>
+                        ✓ SCELTA
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-        </div>
-      )}
+        )}
 
-      {/* ── TAB: Articolo + Social ── */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
-        <button key="article" style={{ ...s.subTab, ...(section === "article" ? s.subTabActive : {}) }} onClick={() => setSection("article")}>
-          📄 Articolo
-        </button>
-        {allSocials.map(sf => (
-          <button key={sf.id}
-            style={{ ...s.subTab, ...(section === sf.id ? s.subTabActive : {}), opacity: sf.hasContent ? 1 : 0.4 }}
-            onClick={() => setSection(sf.id)}>
-            {sf.icon} {sf.label}{!sf.hasContent ? " ⚠️" : ""}
-          </button>
+        {/* SOCIAL */}
+        {SOCIAL_FORMATS.map(sf => section === sf.id && (
+          <div key={sf.id}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <div style={{ color: sf.color || "#888", fontWeight: 700, fontSize: 14 }}>{sf.icon} {sf.label}</div>
+              {isPending && (
+                <button
+                  style={{ ...s.miniBtn, color: "#E8B84B", borderColor: "#E8B84B40", opacity: generatingSocial === sf.id ? 0.5 : 1 }}
+                  onClick={() => generateSocial(sf.id)}
+                  disabled={generatingSocial !== null}>
+                  {generatingSocial === sf.id ? "⏳ Genero..." : editSocials?.[sf.id] ? "🔄 Rigenera" : "✦ Genera post"}
+                </button>
+              )}
+            </div>
+            {isPending ? (
+              <textarea
+                style={{ ...s.input, minHeight: 200, lineHeight: 1.75, fontSize: 14, resize: "vertical" }}
+                placeholder={editSocials?.[sf.id] ? "" : \`Clicca "Genera post" per creare la bozza \${sf.label}, oppure scrivi qui manualmente...\`}
+                value={editSocials?.[sf.id] || ""}
+                onChange={e => { setEditSocials(p => ({ ...p, [sf.id]: e.target.value })); setDirty(true); }}
+              />
+            ) : (
+              <p style={{ color: "#ccc", lineHeight: 1.75, fontSize: 14, whiteSpace: "pre-wrap", margin: 0 }}>
+                {editSocials?.[sf.id] || <span style={{ color: "#333", fontStyle: "italic" }}>Nessuna bozza social</span>}
+              </p>
+            )}
+            {editSocials?.[sf.id] && (
+              <div style={{ marginTop: 8, color: "#444", fontSize: 11, textAlign: "right" }}>
+                {editSocials[sf.id].length} caratteri
+              </div>
+            )}
+          </div>
         ))}
       </div>
 
-      {/* ── CONTENUTO ── */}
-      {editing ? (
-        <div>
-          {section === "article" && (
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
-              {[{ label: "H1", tag: "h1" }, { label: "H2", tag: "h2" }, { label: "P", tag: "p" }].map(({ label, tag }) => (
-                <button key={tag} style={s.tbBtn} onClick={() => setCurrentText(currentText + `\n<${tag}></${tag}>`)}>{label}</button>
-              ))}
-              <div style={{ width: 1, background: "#2a2a2a", margin: "0 4px" }} />
-              {[
-                { label: "B", open: "<strong>", close: "</strong>", style: { fontWeight: 900 } },
-                { label: "I", open: "<em>", close: "</em>", style: { fontStyle: "italic" } },
-                { label: "U", open: "<u>", close: "</u>", style: { textDecoration: "underline" } },
-              ].map(({ label, open, close, style: st }) => (
-                <button key={label} style={{ ...s.tbBtn, ...st }} onClick={() => {
-                  const sel = window.getSelection()?.toString();
-                  if (sel) setCurrentText(currentText.replace(sel, `${open}${sel}${close}`));
-                }}>{label}</button>
-              ))}
-              <div style={{ width: 1, background: "#2a2a2a", margin: "0 4px" }} />
-              <button style={{ ...s.tbBtn, fontSize: 10 }} onClick={() => setCurrentText(currentText.replace(/<[^>]+>/g, ""))}>Rimuovi HTML</button>
-            </div>
-          )}
-          <textarea
-            style={{ ...s.input, minHeight: 280, lineHeight: 1.75, fontSize: 13, resize: "vertical", fontFamily: "'Courier New', monospace" }}
-            value={currentText}
-            onChange={e => setCurrentText(e.target.value)}
-          />
-          {section === "article" && (
-            <div style={{ background: "#0A0A0A", border: "1px solid #2a2a2a", borderRadius: 8, padding: 20, marginTop: 8, color: "#ccc", fontSize: 14, lineHeight: 1.75 }}
-              dangerouslySetInnerHTML={{ __html: currentText }} />
-          )}
-          <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
-            <button style={s.approveBtn} onClick={handleSave}>💾 Salva modifiche</button>
-            <button style={s.rejectBtn} onClick={() => { setEditing(false); setEditTitle(article.title); setEditContent(article.content); setEditSocials({ ...article.socials }); }}>Annulla</button>
-          </div>
-        </div>
-      ) : (
-        <div style={{ ...s.contentBox, maxHeight: 340 }}>
-          {section === "article"
-            ? <div style={{ color: "#ccc", lineHeight: 1.85, fontSize: 14 }} dangerouslySetInnerHTML={{ __html: editContent }} />
-            : editSocials?.[section]
-              ? <p style={{ color: "#ccc", lineHeight: 1.75, fontSize: 14, whiteSpace: "pre-wrap", margin: 0 }}>{editSocials[section]}</p>
-              : <div style={{ color: "#333", fontStyle: "italic", padding: 20 }}>Bozza social non generata per questo articolo. Clicca ✏️ Modifica per aggiungerla manualmente.</div>
-          }
-        </div>
-      )}
-
-      {/* ── AZIONI ── */}
-      {!editing && article.status === STATUS.PENDING && (
-        <div style={{ display: "flex", gap: 12, marginTop: 20 }}>
-          <button style={s.approveBtn} onClick={() => onApprove({ ...article, title: editTitle, content: editContent, socials: editSocials, selectedImageUrl })}>
+      {/* ── FOOTER AZIONI ── */}
+      {isPending && (
+        <div style={{ padding: "14px 20px", borderTop: "1px solid #1e1e1e", background: "#0d0d0d", display: "flex", gap: 10 }}>
+          <button
+            style={{ ...s.approveBtn, flex: 1 }}
+            onClick={() => { if(dirty) save(); onApprove({ ...article, title: editTitle, content: editContent, socials: editSocials, imageOptions, selectedImageUrl }); }}>
             ✅ Approva{wpConfigured ? " e Pubblica su WP" : ""}
           </button>
           <button style={s.rejectBtn} onClick={onReject}>🗑 Scarta</button>
         </div>
       )}
-      {article.status !== STATUS.PENDING && (
-        <div style={{ marginTop: 16, padding: "10px 16px", borderRadius: 8, background: "#111", color: STATUS_META[article.status]?.color || "#555", fontSize: 13 }}>
+      {!isPending && (
+        <div style={{ padding: "12px 20px", borderTop: "1px solid #1e1e1e", background: "#0d0d0d", color: STATUS_META[article.status]?.color || "#555", fontSize: 13 }}>
           {STATUS_META[article.status]?.label}{article.publishedToWP ? " · Pubblicato su WordPress ✓" : ""}
         </div>
       )}
     </div>
   );
 }
+
 
 // ─── CLIENT MODAL ─────────────────────────────────────────────────────────────
 function ClientModal({ onSave, onClose }) {
