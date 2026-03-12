@@ -317,57 +317,52 @@ REGOLE FORMATO:
           normative: "sports club team",
         };
         const keyword = catKeywords[catId] || "sports athletes action";
-        // Fetch 3 image options for user to choose from
-        const [img1, img2, img3] = await Promise.all([
+        // Fetch 3 image options — NO upload yet, user picks at approval time
+        const imgResults = await Promise.allSettled([
           fetch(`/api/unsplash?query=${encodeURIComponent(keyword)}`).then(r => r.ok ? r.json() : null),
           fetch(`/api/unsplash?query=${encodeURIComponent(keyword)}`).then(r => r.ok ? r.json() : null),
           fetch(`/api/unsplash?query=${encodeURIComponent(keyword)}`).then(r => r.ok ? r.json() : null),
         ]);
-        const imageOptions = [img1?.url, img2?.url, img3?.url].filter(Boolean);
-        const imageUrl = imageOptions[0]; // default first, user can change in review
-        if (imageUrl) {
-          // Upload via server-side proxy to avoid CORS and binary issues
-          const currentWp = wpConfigRef.current;
-          const proxyRes = await fetch("/api/upload-media", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              imageUrl,
-              wpUrl: currentWp.url,
-              wpUser: currentWp.user,
-              wpPassword: currentWp.password,
-            }),
-          });
-          if (proxyRes.ok) {
-            const proxyData = await proxyRes.json();
-            featuredImageId = proxyData.id;
-            addLog("✅ Immagine di copertina caricata", "success");
-          } else {
-            const errData = await proxyRes.json().catch(() => ({}));
-            addLog("⚠️ Upload immagine fallito: " + (errData.error || proxyRes.status), "info");
-          }
+        const imageOptions = imgResults
+          .filter(r => r.status === "fulfilled" && r.value && r.value.url)
+          .map(r => r.value.url);
+        if (imageOptions.length > 0) {
+          addLog(`✅ ${imageOptions.length} immagini pronte — scegli in Revisione`, "success");
         }
       } catch(e) {
         addLog("⚠️ Immagine copertina errore: " + e.message, "info");
       }
 
-      // Social posts
+      // Social posts — generate for ALL selected platforms
       const socialResults = {};
+      const plainText = content.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 600);
       for (const sid of socials) {
         const sf = SOCIAL_FORMATS.find(s => s.id === sid);
         addLog(`📱 Creazione post ${sf.label}...`, "info");
+        const platformInstructions = {
+          instagram: "Usa emoji, tono coinvolgente, max 2000 caratteri, termina con call to action e 5-10 hashtag.",
+          facebook: "Tono informativo e diretto, max 800 caratteri, aggiungi 3-5 hashtag in fondo.",
+          linkedin: "Tono professionale per dirigenti sportivi, max 600 caratteri, hashtag professionali.",
+        };
         const socialSystem = `Sei un social media manager sportivo italiano esperto.
-Crea un post ${sf.label} basato sull'articolo. Usa italiano. Includi hashtag rilevanti.
-Instagram: emoji, coinvolgente, max 2200 caratteri, call to action.
-Facebook: informativo, max 1000 caratteri.
-LinkedIn: professionale, orientato a dirigenti e operatori sportivi, max 700 caratteri.
-Rispondi SOLO con il testo del post, niente altro.`;
-        const sd = await callClaude(
-          [{ role: "user", content: `Crea post ${sf.label}:\nTITOLO: ${title}\nARTICOLO: ${content.slice(0, 800)}` }],
-          socialSystem
-        );
-        socialResults[sid] = extractText(sd);
-        addLog(`✅ Post ${sf.label} pronto`, "success");
+Crea UN post per ${sf.label} in italiano.
+${platformInstructions[sid] || ""}
+Rispondi SOLO con il testo del post. Nessun titolo, nessuna spiegazione aggiuntiva.`;
+        try {
+          const sd = await callClaude(
+            [{ role: "user", content: `Crea il post ${sf.label} per questo articolo.\nTitolo: ${title}\nContenuto: ${plainText}` }],
+            socialSystem
+          );
+          const postText = extractText(sd);
+          if (postText) {
+            socialResults[sid] = postText;
+            addLog(`✅ Post ${sf.label} pronto`, "success");
+          } else {
+            addLog(`⚠️ Post ${sf.label} non generato`, "info");
+          }
+        } catch(e) {
+          addLog(`⚠️ Post ${sf.label} errore: ${e.message}`, "info");
+        }
       }
 
       setArticles(prev => prev.map(a =>
@@ -447,16 +442,17 @@ Rispondi SOLO con il testo del post, niente altro.`;
   }, [wpConfig, addLog]);
 
   const approveArticle = useCallback(async (article) => {
-    // If user selected a different image, upload it first
+    // Upload the selected image NOW (at approval time)
     let finalArticle = article;
-    if (article.selectedImageUrl && article.selectedImageUrl !== article.imageOptions?.[0]) {
-      addLog("🖼 Upload immagine selezionata...", "info");
+    const imageToUpload = article.selectedImageUrl || article.imageOptions?.[0];
+    if (imageToUpload) {
+      addLog("🖼 Upload immagine scelta su WordPress...", "info");
       try {
         const proxyRes = await fetch("/api/upload-media", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            imageUrl: article.selectedImageUrl,
+            imageUrl: imageToUpload,
             wpUrl: wpConfigRef.current.url,
             wpUser: wpConfigRef.current.user,
             wpPassword: wpConfigRef.current.password,
@@ -465,8 +461,13 @@ Rispondi SOLO con il testo del post, niente altro.`;
         if (proxyRes.ok) {
           const data = await proxyRes.json();
           finalArticle = { ...article, featuredImageId: data.id };
+          addLog("✅ Immagine caricata su WordPress", "success");
+        } else {
+          addLog("⚠️ Upload immagine fallito", "info");
         }
-      } catch(e) {}
+      } catch(e) {
+        addLog("⚠️ Errore upload immagine: " + e.message, "info");
+      }
     }
     const published = await publishToWordPress(finalArticle);
     setArticles(prev => prev.map(a =>
